@@ -115,6 +115,12 @@ function kw(name){
     return[...new Set(r)];
 }
 
+// 产品类型关键词推断（用于同类型优先匹配）
+function typeKeys(name){
+    const tw=['管','钉','螺丝','螺母','螺栓','线','电缆','开关','插座','阀门','弯头','法兰','接头','三通','直接','堵头','胶','焊','锁','灯','配电箱','桥架','支架','吊架','灭火器','扳手','钳','锤','锯','刀','梯','绳','带','布','板','棒','丝','网','桶','袋','箱','柜','架','钩','环','套','垫','圈','盖','帽','卡','扣','链','刷','扫','壶','盆','桶','盘','盒','包','套','托','座','架','夹','片','块','条','根','把','支','只','个','件','条','卷','筒','箱','组','副','对','付','批','米','吨','公斤'];
+    return tw.filter(w=>name.includes(w));
+}
+
 // 模糊匹配打分
 function fz(sn,pn){
     const cl=s=>s.replace(/[\s（）()\[\]【】]/g,'').replace(/（[^）]*）/g,'').replace(/\([^)]*\)/g,'').replace(/【[^】]*】/g,'');
@@ -280,21 +286,26 @@ function runAnalysis(){
             med.push({...it,matchType:'fuzzy',confidence:'medium',matchedJx:bm,jxKey:bk,detail:bml,fs:bs});
             return;
         }
-        // 5. 低可信 - 关键词重叠
+        // 5. 低可信 - 关键词重叠（同类型优先）
         const sk=kw(it.pureName);
+        const tk=typeKeys(it.pureName);
         Object.entries(jxMap).forEach(([k,v])=>{
             const pk=new Set(kw(v.name));
             const ca=sk.filter(w=>pk.has(w));
             const c2=ca.filter(w=>w.length>=2);
             const c1=ca.filter(w=>w.length===1);
             const sc=(it.category&&v.category&&it.category===v.category);
+            // 同类型加分
+            const jxTk=typeKeys(v.name);
+            const typeMatch=tk.some(t=>jxTk.includes(t));
             let s=0,ml='';
-            if(c2.length>=2){s=40;ml='共同词: '+c2.slice(0,3).join(',')}
-            else if(c2.length>=1){s=sc?30:25;ml='共同词: '+c2.join(',')}
-            else if(c1.length>=3){s=20;ml=`多字重叠(${c1.length}字)`}
-            else if(c1.length>=2){s=15;ml='字重叠: '+c1.slice(0,3).join(',')}
+            if(c2.length>=2){s=typeMatch?50:40;ml='共同词: '+c2.slice(0,3).join(',')+(typeMatch?' [同类]':'')}
+            else if(c2.length>=1){s=typeMatch?40:25;ml='共同词: '+c2.join(',')+(typeMatch?' [同类]':'')}
+            else if(c1.length>=3){s=typeMatch?30:20;ml=`多字重叠(${c1.length}字)`+(typeMatch?' [同类]':'')}
+            else if(c1.length>=2){s=typeMatch?25:15;ml='字重叠: '+c1.slice(0,3).join(',')+(typeMatch?' [同类]':'')}
             else if(c1.length>=1&&sc){s=12;ml='同分类+字重叠'}
             else if(sc){s=8;ml='仅同分类'}
+            else if(typeMatch){s=18;ml='同类型: '+tk.filter(t=>jxTk.includes(t)).join(',')}
             if(s>bs){bs=s;bm=v;bk=k;bml=ml}
         });
         if(bm&&bs>=8){
@@ -311,7 +322,22 @@ function runAnalysis(){
             low.push({...it,matchType:'category',confidence:'low',matchedJx:jxMap[jk],jxKey:jk,detail:'同分类匹配'});
             return;
         }
-        // 7. 终极兜底：任何有余额的进项
+        // 7. 同类型兜底（优先同类型有余额的进项）
+        if(tk.length>0){
+            let bestType=null,bestKey='',bestAmt=0;
+            Object.entries(jxMap).forEach(([k,v])=>{
+                const jxTk=typeKeys(v.name);
+                if(tk.some(t=>jxTk.includes(t))&&v.totalAmount>bestAmt){
+                    bestType=v;bestKey=k;bestAmt=v.totalAmount;
+                }
+            });
+            if(bestType){
+                matchLookup[mk]={jxKey:bestKey,confidence:'low',matchType:'type_match',detail:'同类型匹配: '+tk.filter(t=>typeKeys(bestType.name).includes(t)).join(',')};
+                low.push({...it,matchType:'type_match',confidence:'low',matchedJx:bestType,jxKey:bestKey,detail:'同类型匹配: '+tk.filter(t=>typeKeys(bestType.name).includes(t)).join(',')});
+                return;
+            }
+        }
+        // 8. 终极兜底：任何有余额的进项
         const anyJx=Object.entries(jxMap).sort((a,b)=>b[1].totalAmount-a[1].totalAmount)[0];
         if(anyJx){
             matchLookup[mk]={jxKey:anyJx[0],confidence:'low',matchType:'fallback',detail:'兜底匹配'};
@@ -346,10 +372,12 @@ function runAnalysis(){
         let matchType=match?match.matchType:'none';
         let matchDetail=match?match.detail:'';
 
-        // 如果匹配的进项没余额了，找有余额的替代
+        // 如果匹配的进项没余额了，找有余额的替代（同类型优先）
         if(!jxKey||!jxBal[jxKey]||jxBal[jxKey].amt<=0.01){
             const cat=it.cat||'未分类';
+            const tk=typeKeys(it.name);
             let found=false;
+            // 1. 同分类有余额
             if(jxByCat[cat]){
                 for(const jx of jxByCat[cat].sort((a,b)=>b.totalAmount-a.totalAmount)){
                     const k2=jx.name+'|'+jx.spec;
@@ -358,6 +386,19 @@ function runAnalysis(){
                     }
                 }
             }
+            // 2. 同类型有余额
+            if(!found&&tk.length>0){
+                let bestBalKey='',bestBalAmt=0;
+                for(const[k2,b] of Object.entries(jxBal)){
+                    if(b.amt<=0.01)continue;
+                    const jxTk=typeKeys(jxMap[k2]?jxMap[k2].name:'');
+                    if(tk.some(t=>jxTk.includes(t))&&b.amt>bestBalAmt){
+                        bestBalKey=k2;bestBalAmt=b.amt;
+                    }
+                }
+                if(bestBalKey){jxKey=bestBalKey;confidence='low';matchType='type_bal';matchDetail='同类型余额匹配';found=true;}
+            }
+            // 3. 任何有余额
             if(!found){
                 for(const[k2,b] of Object.entries(jxBal)){
                     if(b.amt>0.01){jxKey=k2;confidence='low';matchType='fallback_bal';matchDetail='余额分配匹配';found=true;break;}
@@ -489,7 +530,7 @@ function rConfTable(items,c,e){
     <div class="scrollable-table"><table><thead><tr><th>方式</th><th>原品名</th><th>规格</th><th>匹配进项</th><th>进项规格</th><th>销项金额</th><th>进项金额</th><th>说明</th><th>够开?</th></tr></thead>
     <tbody>${items.map(it=>{
         const mr=it.totalAmount/1.185,en=it.matchedJx&&it.matchedJx.totalAmount>=mr;
-        const ml=it.matchType==='exact'?'精确':it.matchType==='alias'?'别名':it.matchType==='name_same'?'品名同':it.matchType==='category'?'同分类':it.matchType==='fallback'?'兜底':'模糊';
+        const ml=it.matchType==='exact'?'精确':it.matchType==='alias'?'别名':it.matchType==='name_same'?'品名同':it.matchType==='category'?'同分类':it.matchType==='type_match'?'同类型':it.matchType==='fallback'?'兜底':'模糊';
         const tc=it.matchType==='exact'||it.matchType==='alias'?'tag-success':it.matchType==='name_same'?'tag-info':'tag-warning';
         return`<tr><td><span class="tag ${tc}">${ml}</span></td><td><strong>${it.pureName}</strong></td><td>${it.spec||'-'}</td>
         <td>${it.matchedJx?it.matchedJx.name:'-'}</td>
