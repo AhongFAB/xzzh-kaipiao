@@ -121,6 +121,15 @@ function typeKeys(name){
     return tw.filter(w=>name.includes(w));
 }
 
+// 专用进项关键词：含这些词的进项不能用于低可信/兜底匹配（除非销项也含该词）
+const exclusiveKw=['PE管','桥架','直接','三通','阀门','PVC','日丰'];
+function isExclusive(jxName){
+    return exclusiveKw.some(k=>jxName.includes(k));
+}
+function hasSameExclusive(kpName,jxName){
+    return exclusiveKw.some(k=>kpName.includes(k)&&jxName.includes(k));
+}
+
 // 模糊匹配打分
 function fz(sn,pn){
     const cl=s=>s.replace(/[\s（）()\[\]【】]/g,'').replace(/（[^）]*）/g,'').replace(/\([^)]*\)/g,'').replace(/【[^】]*】/g,'');
@@ -286,10 +295,12 @@ function runAnalysis(){
             med.push({...it,matchType:'fuzzy',confidence:'medium',matchedJx:bm,jxKey:bk,detail:bml,fs:bs});
             return;
         }
-        // 5. 低可信 - 关键词重叠（同类型优先）
+        // 5. 低可信 - 关键词重叠（同类型优先，专用进项排除）
         const sk=kw(it.pureName);
         const tk=typeKeys(it.pureName);
         Object.entries(jxMap).forEach(([k,v])=>{
+            // 专用进项排除：如果进项含专用词但销项不含该词，跳过
+            if(isExclusive(v.name)&&!hasSameExclusive(it.pureName,v.name))return;
             const pk=new Set(kw(v.name));
             const ca=sk.filter(w=>pk.has(w));
             const c2=ca.filter(w=>w.length>=2);
@@ -313,19 +324,23 @@ function runAnalysis(){
             low.push({...it,matchType:'low_fuzzy',confidence:'low',matchedJx:bm,jxKey:bk,detail:bml,fs:bs});
             return;
         }
-        // 6. 同分类兜底
+        // 6. 同分类兜底（排除专用进项）
         const cat=it.category||'未分类';
         if(jxByCat[cat]&&jxByCat[cat].length>0){
-            const best=jxByCat[cat].sort((a,b)=>b.totalAmount-a.totalAmount)[0];
-            const jk=best.name+'|'+best.spec;
-            matchLookup[mk]={jxKey:jk,confidence:'low',matchType:'category',detail:'同分类匹配'};
-            low.push({...it,matchType:'category',confidence:'low',matchedJx:jxMap[jk],jxKey:jk,detail:'同分类匹配'});
-            return;
+            const catAvail=jxByCat[cat].filter(jx=>!isExclusive(jx.name)||hasSameExclusive(it.pureName,jx.name));
+            if(catAvail.length>0){
+                const best=catAvail.sort((a,b)=>b.totalAmount-a.totalAmount)[0];
+                const jk=best.name+'|'+best.spec;
+                matchLookup[mk]={jxKey:jk,confidence:'low',matchType:'category',detail:'同分类匹配'};
+                low.push({...it,matchType:'category',confidence:'low',matchedJx:jxMap[jk],jxKey:jk,detail:'同分类匹配'});
+                return;
+            }
         }
-        // 7. 同类型兜底（优先同类型有余额的进项）
+        // 7. 同类型兜底（优先同类型有余额的进项，排除专用）
         if(tk.length>0){
             let bestType=null,bestKey='',bestAmt=0;
             Object.entries(jxMap).forEach(([k,v])=>{
+                if(isExclusive(v.name)&&!hasSameExclusive(it.pureName,v.name))return;
                 const jxTk=typeKeys(v.name);
                 if(tk.some(t=>jxTk.includes(t))&&v.totalAmount>bestAmt){
                     bestType=v;bestKey=k;bestAmt=v.totalAmount;
@@ -337,11 +352,11 @@ function runAnalysis(){
                 return;
             }
         }
-        // 8. 终极兜底：任何有余额的进项
-        const anyJx=Object.entries(jxMap).sort((a,b)=>b[1].totalAmount-a[1].totalAmount)[0];
-        if(anyJx){
-            matchLookup[mk]={jxKey:anyJx[0],confidence:'low',matchType:'fallback',detail:'兜底匹配'};
-            low.push({...it,matchType:'fallback',confidence:'low',matchedJx:anyJx[1],jxKey:anyJx[0],detail:'兜底匹配'});
+        // 8. 终极兜底：排除专用进项后的任意有余额进项
+        const nonExclusiveJx=Object.entries(jxMap).filter(([k,v])=>!isExclusive(v.name)||hasSameExclusive(it.pureName,v.name)).sort((a,b)=>b[1].totalAmount-a[1].totalAmount);
+        if(nonExclusiveJx.length>0){
+            matchLookup[mk]={jxKey:nonExclusiveJx[0][0],confidence:'low',matchType:'fallback',detail:'兜底匹配'};
+            low.push({...it,matchType:'fallback',confidence:'low',matchedJx:nonExclusiveJx[0][1],jxKey:nonExclusiveJx[0][0],detail:'兜底匹配'});
             return;
         }
         // 理论上不会到这里（只要有进项数据）
@@ -372,36 +387,41 @@ function runAnalysis(){
         let matchType=match?match.matchType:'none';
         let matchDetail=match?match.detail:'';
 
-        // 如果匹配的进项没余额了，找有余额的替代（同类型优先）
+        // 如果匹配的进项没余额了，找有余额的替代（同类型优先，专用进项排除）
         if(!jxKey||!jxBal[jxKey]||jxBal[jxKey].amt<=0.01){
             const cat=it.cat||'未分类';
             const tk=typeKeys(it.name);
             let found=false;
-            // 1. 同分类有余额
+            // 1. 同分类有余额（排除专用）
             if(jxByCat[cat]){
-                for(const jx of jxByCat[cat].sort((a,b)=>b.totalAmount-a.totalAmount)){
+                const catAvail=jxByCat[cat].filter(jx=>(!isExclusive(jx.name)||hasSameExclusive(it.name,jx.name))&&jxBal[jx.name+'|'+jx.spec]&&jxBal[jx.name+'|'+jx.spec].amt>0.01);
+                if(catAvail.length>0){
+                    const jx=catAvail.sort((a,b)=>b.totalAmount-a.totalAmount)[0];
                     const k2=jx.name+'|'+jx.spec;
-                    if(jxBal[k2]&&jxBal[k2].amt>0.01){
-                        jxKey=k2;confidence='low';matchType='category_bal';matchDetail='同分类余额匹配';found=true;break;
-                    }
+                    jxKey=k2;confidence='low';matchType='category_bal';matchDetail='同分类余额匹配';found=true;
                 }
             }
-            // 2. 同类型有余额
+            // 2. 同类型有余额（排除专用）
             if(!found&&tk.length>0){
                 let bestBalKey='',bestBalAmt=0;
                 for(const[k2,b] of Object.entries(jxBal)){
                     if(b.amt<=0.01)continue;
-                    const jxTk=typeKeys(jxMap[k2]?jxMap[k2].name:'');
+                    const jxName=jxMap[k2]?jxMap[k2].name:'';
+                    if(isExclusive(jxName)&&!hasSameExclusive(it.name,jxName))continue;
+                    const jxTk=typeKeys(jxName);
                     if(tk.some(t=>jxTk.includes(t))&&b.amt>bestBalAmt){
                         bestBalKey=k2;bestBalAmt=b.amt;
                     }
                 }
                 if(bestBalKey){jxKey=bestBalKey;confidence='low';matchType='type_bal';matchDetail='同类型余额匹配';found=true;}
             }
-            // 3. 任何有余额
+            // 3. 任何有余额（排除专用）
             if(!found){
                 for(const[k2,b] of Object.entries(jxBal)){
-                    if(b.amt>0.01){jxKey=k2;confidence='low';matchType='fallback_bal';matchDetail='余额分配匹配';found=true;break;}
+                    if(b.amt<=0.01)continue;
+                    const jxName=jxMap[k2]?jxMap[k2].name:'';
+                    if(isExclusive(jxName)&&!hasSameExclusive(it.name,jxName))continue;
+                    jxKey=k2;confidence='low';matchType='fallback_bal';matchDetail='余额分配匹配';found=true;break;
                 }
             }
         }
