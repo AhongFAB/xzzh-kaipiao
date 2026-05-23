@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="开票建议匹配工具">
+    <meta name="theme-color" content="#0891b2">
+    <title>开票建议匹配工具</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📋</text></svg>">
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --card: rgba(30,41,59,.8);
+            --card-border: rgba(148,163,184,.1);
+            --text-primary: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --primary: #3b82f6;
+            --primary-dark: #2563eb;
+            --success: #10b981;
+            --warning: #f97316;
+            --danger: #ef4444;
+            --border: rgba(148,163,184,.15);
+            --input-bg: rgba(15,23,42,.6);
+            --input-border: rgba(148,163,184,.2);
+            --tab-bg: rgba(30,41,59,.8);
+            --hover-bg: rgba(59,130,246,.05);
+            --br: 16px;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0 }
+        body {
+            font-family: 'PingFang SC','Microsoft YaHei',-apple-system,sans-serif;
+            background: var(--bg);
+            background-image: 
+                radial-gradient(ellipse at 20% 20%, rgba(59,130,246,.08) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 80%, rgba(16,185,129,.06) 0%, transparent 50%),
+                linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+            min-height: 100vh;
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px }
+        header {
+            background: linear-gradient(135deg, rgba(30,41,59,.9), rgba(15,23,42,.95));
+            border: 1px solid rgba(59,130,246,.2);
+            backdrop-filter: blur(10px);
+            color: var(--text-primary);
+            padding: 30px;
+            border-radius: var(--br);
+            margin-bottom: 24px;
+            box-shadow: 0 8px 30px rgba(0,0,0,.3);
+            position: relative;
+            overflow: hidden;
+        }
+        header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, var(--primary), var(--success), var(--primary));
+        }
+        header h1 { font-size: 28px; margin-bottom: 8px; font-weight: 600 }
+        header p { opacity: .8; font-size: 14px; color: var(--text-secondary) }
+        .upload-section { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px }
+        .upload-card {
+            background: var(--card);
+            border: 1px solid var(--card-border);
+            backdrop-filter: blur(10px);
+            border-radius: var(--br);
+            padding: 24px;
+            box-shadow: 0 8px 30px rgba(0,0,0,.3);
+            transition: .3s;
+        }
+        .upload-card:hover { border-color: rgba(59,130,246,.3); transform: translateY(-2px) }
+        .upload-card.dragover { border-color: var(--primary); background: rgba(59,130,246,.1) }
+        .upload-card h3 { color: var(--primary); margin-bottom: 16px; display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 500 }
+        .upload-zone {
+            border: 2px dashed rgba(148,163,184,.3);
+            border-radius: 12px;
+            padding: 40px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: .3s;
+            background: rgba(15,23,42,.4);
+        }
+        .upload-zone:hover { border-color: var(--primary); background: rgba(59,130,246,.05) }
+        .upload-zone .icon { font-size: 48px; margin-bottom: 12px }
+        .upload-zone .hint { color: var(--text-muted); font-size: 14px }
+        .file-info { margin-top: 12px; padding: 12px; background: rgba(59,130,246,.1); border-radius: 8px; display: none }
+        .file-info.show { display: block }
+        .file-info .name { font-weight: 600; color: var(--primary); word-break: break-all }
+        .file-info .meta { font-size: 12px; color: var(--text-secondary); margin-top: 4px }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: .2s;
+        }
+        .btn-primary { background: linear-gradient(135deg, var(--primary), var(--primary-dark)); color: #fff; box-shadow: 0 4px 15px rgba(59,130,246,.3) }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(59,130,246,.4) }
+        .btn-primary:disabled { opacity: .5; cursor: not-allowed; transform: none }
+        .btn-secondary { background: rgba(148,163,184,.2); color: var(--text-primary) }
+        .btn-secondary:hover { background: rgba(148,163,184,.3) }
+        .btn-success { background: linear-gradient(135deg, var(--success), #059669); color: #fff; box-shadow: 0 4px 15px rgba(16,185,129,.3) }
+        .btn-success:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(16,185,129,.4) }
+        .btn-danger { background: rgba(239,68,68,.2); color: var(--danger) }
+        .btn-danger:hover { background: rgba(239,68,68,.3) }
+        .btn-sm { padding: 6px 12px; font-size: 12px }
+        .action-bar { display: flex; justify-content: center; gap: 12px; margin-bottom: 24px }
+        .tabs {
+            display: flex;
+            gap: 4px;
+            background: var(--card);
+            border: 1px solid var(--card-border);
+            backdrop-filter: blur(10px);
+            padding: 6px;
+            border-radius: var(--br);
+            box-shadow: 0 8px 30px rgba(0,0,0,.3);
+            margin-bottom: 20px;
+            overflow-x: auto;
+            flex-wrap: wrap;
+        }
+        .tab-btn {
+            padding: 10px 18px;
+            border: none;
+            background: transparent;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            transition: .2s;
+            white-space: nowrap;
+        }
+        .tab-btn:hover { background: rgba(59,130,246,.1); color: var(--text-primary) }
+        .tab-btn.active { background: var(--primary); color: #fff; box-shadow: 0 4px 15px rgba(59,130,246,.3) }
+        .tab-btn .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; margin-left: 6px; background: rgba(255,255,255,.2) }
+        .tab-btn:not(.active) .badge { background: rgba(148,163,184,.2) }
+        .tab-content { display: none }
+        .tab-content.active { display: block }
+        .card {
+            background: var(--card);
+            border: 1px solid var(--card-border);
+            backdrop-filter: blur(10px);
+            border-radius: var(--br);
+            padding: 24px;
+            box-shadow: 0 8px 30px rgba(0,0,0,.3);
+            margin-bottom: 20px;
+        }
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-primary);
+        }
+        .card-title { font-size: 16px; font-weight: 600; color: var(--text-primary) }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 20px }
+        .stat-card {
+            background: var(--card);
+            border: 1px solid var(--card-border);
+            backdrop-filter: blur(10px);
+            border-radius: var(--br);
+            padding: 20px;
+            box-shadow: 0 8px 30px rgba(0,0,0,.3);
+            text-align: center;
+        }
+        .stat-card .value { font-size: 28px; font-weight: 700; color: var(--primary) }
+        .stat-card .label { font-size: 13px; color: var(--text-secondary); margin-top: 4px }
+        .stat-card.success .value { color: var(--success) }
+        .stat-card.warning .value { color: var(--warning) }
+        .stat-card.danger .value { color: var(--danger) }
+        table { width: 100%; border-collapse: collapse; font-size: 13px }
+        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border) }
+        th {
+            background: rgba(59,130,246,.15);
+            color: #93c5fd;
+            font-weight: 500;
+            position: sticky;
+            top: 0;
+        }
+        tr:hover { background: var(--hover-bg) }
+        .tag { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500 }
+        .tag-success { background: rgba(16,185,129,.2); color: #6ee7b7 }
+        .tag-warning { background: rgba(249,115,22,.2); color: #fdba74 }
+        .tag-danger { background: rgba(239,68,68,.2); color: #fca5a5 }
+        .tag-info { background: rgba(59,130,246,.2); color: #93c5fd }
+        .scrollable-table { max-height: 70vh; overflow: auto; border-radius: 8px }
+        .money { font-family: 'SF Mono',Monaco,Consolas,monospace; text-align: right; white-space: nowrap; color: var(--text-primary) }
+        .empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted) }
+        .empty-state .icon { font-size: 48px; margin-bottom: 12px }
+        .alias-item { display: flex; align-items: center; gap: 12px; padding: 12px; background: rgba(59,130,246,.08); border-radius: 8px; margin-bottom: 8px; border: 1px solid rgba(59,130,246,.1) }
+        .alias-item .arrow { font-size: 20px; color: var(--primary) }
+        .toast { position: fixed; top: 20px; right: 20px; padding: 12px 24px; border-radius: 10px; color: #fff; font-size: 14px; z-index: 9999; animation: si .3s; backdrop-filter: blur(10px) }
+        .toast-success { background: rgba(16,185,129,.9); border: 1px solid var(--success) }
+        .toast-error { background: rgba(239,68,68,.9); border: 1px solid var(--danger) }
+        .toast-info { background: rgba(59,130,246,.9); border: 1px solid var(--primary) }
+        @keyframes si { from { transform: translateX(100%); opacity: 0 } to { transform: translateX(0); opacity: 1 } }
+        footer { text-align: center; padding: 24px; color: var(--text-muted); font-size: 12px }
+        .highlight-row { background: rgba(249,115,22,.08) !important }
+        .success-row { background: rgba(16,185,129,.08) !important }
+        .error-row { background: rgba(239,68,68,.08) !important }
+        /* Progress bar */
+        .progress-track { background: rgba(148,163,184,.2); border-radius: 12px; overflow: hidden }
+        .progress-bar { height: 24px; border-radius: 12px; transition: width .5s ease }
+        /* Input focus */
+        input:focus, select:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(59,130,246,.2) }
+        @media (max-width: 768px) { .upload-section { grid-template-columns: 1fr } .stats-grid { grid-template-columns: 1fr 1fr } }
+    </style>
+</head>
+<body>
+<div class="container">
+    <header><h1>📋 开票建议匹配工具</h1><p>智能匹配销项进项品名，自动计算进项缺口，生成开票建议</p></header>
+    <div class="upload-section">
+        <div class="upload-card" id="kpCard"><h3>📤 待开票清单</h3><div class="upload-zone" id="kpZone"><div class="icon">📄</div><div>点击或拖拽上传</div><div class="hint">支持 .xlsx / .xls / .csv</div></div><input type="file" id="kpInput" accept=".xlsx,.xls,.csv" style="display:none"><div class="file-info" id="kpInfo"><div class="name" id="kpName"></div><div class="meta" id="kpMeta"></div></div></div>
+        <div class="upload-card" id="jxCard"><h3>📥 进项明细</h3><div class="upload-zone" id="jxZone"><div class="icon">📄</div><div>点击或拖拽上传</div><div class="hint">可开进项表 或 完整进项明细</div></div><input type="file" id="jxInput" accept=".xlsx,.xls,.csv" style="display:none"><div class="file-info" id="jxInfo"><div class="name" id="jxName"></div><div class="meta" id="jxMeta"></div></div></div>
+    </div>
+    <div class="action-bar"><button class="btn btn-primary" id="analyzeBtn" onclick="runAnalysis()" disabled>🔍 开始分析</button><button class="btn btn-secondary" onclick="clearAll()">🗑️ 清空数据</button></div>
+    <div id="resultsSection" style="display:none">
+        <div class="tabs">
+            <button class="tab-btn" onclick="switchTab(0)">📊 匹配概览</button>
+            <button class="tab-btn" onclick="switchTab(1)">🟢 高可信<span class="badge" id="highBadge"></span></button>
+            <button class="tab-btn" onclick="switchTab(2)">🟡 中可信<span class="badge" id="medBadge"></span></button>
+            <button class="tab-btn" onclick="switchTab(3)">🔴 低可信<span class="badge" id="lowBadge"></span></button>
+            <button class="tab-btn" onclick="switchTab(4)">🤔 待确认<span class="badge" id="sgBadge"></span></button>
+            <button class="tab-btn" onclick="switchTab(5)">📦 进项余额</button>
+            <button class="tab-btn" onclick="switchTab(6)">🔗 别名表</button>
+            <button class="tab-btn" onclick="switchTab(7)">📋 开票建议</button>
+        </div>
+        <div class="action-bar" style="margin-bottom:16px"><button class="btn btn-success btn-sm" onclick="exportCurrentTab()">📥 导出当前页</button><button class="btn btn-primary btn-sm" onclick="exportAll()">📥 导出全部</button></div>
+        <div class="tab-content" id="tab0"></div><div class="tab-content" id="tab1"></div><div class="tab-content" id="tab2"></div><div class="tab-content" id="tab3"></div><div class="tab-content" id="tab4"></div><div class="tab-content" id="tab5"></div><div class="tab-content" id="tab6"></div><div class="tab-content" id="tab7"></div>
+    </div>
+</div>
+<footer>© 2026 开票建议匹配工具 · 开发者：张洪杰 · 侵权必究</footer>
+<script>
+let kpData=[],jxData=[],result=null,curTab=0,aliasMap={};
+try{aliasMap=JSON.parse(localStorage.getItem('kaipiao_alias_map')||'{}')}catch(e){aliasMap={}}
+const fmt=n=>(n==null||isNaN(n))?'0.00':Math.abs(n).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+const toast=(m,t='info')=>{const e=document.createElement('div');e.className='toast toast-'+t;e.textContent=m;document.body.appendChild(e);setTimeout(()=>e.remove(),3000)};
+const pureName=n=>{if(!n)return'';const s=String(n).replace(/\n/g,'').trim();const m=s.match(/^\*[^*]+\*([\s\S]+)$/);return m?m[1].trim():s};
+const category=n=>{if(!n)return'';const s=String(n).replace(/\n/g,'').trim();const m=s.match(/^\*([^*]+)\*/);return m?m[1].trim():''};
+
+// 激进关键词提取
+function kw(name){
+    const c=name.replace(/[\s（）()\[\]【】°Φφ#*·\-\/\\]/g,'');
+    const ts=c.match(/[\u4e00-\u9fff]+|[A-Za-z]+|[0-9]+/g)||[];
+    const r=[];
+    for(const t of ts){
+        if(/^[\u4e00-\u9fff]+$/.test(t)){
+            if(t.length>=2)r.push(t);
+            for(let i=0;i<t.length-1;i++)r.push(t.substring(i,i+2));
+            for(const ch of t)r.push(ch);
+        }else if(/^[A-Za-z]+$/.test(t))r.push(t.toUpperCase());
+        else if(/^[0-9]+$/.test(t))r.push(t);
+    }
+    return[...new Set(r)];
+}
+
+// 产品类型关键词推断（用于同类型优先匹配）
+function typeKeys(name){
+    const tw=['管','钉','螺丝','螺母','螺栓','线','电缆','开关','插座','阀门','弯头','法兰','接头','三通','直接','堵头','胶','焊','锁','灯','配电箱','桥架','支架','吊架','灭火器','扳手','钳','锤','锯','刀','梯','绳','带','布','板','棒','丝','网','桶','袋','箱','柜','架','钩','环','套','垫','圈','盖','帽','卡','扣','链','刷','扫','壶','盆','桶','盘','盒','包','套','托','座','架','夹','片','块','条','根','把','支','只','个','件','条','卷','筒','箱','组','副','对','付','批','米','吨','公斤'];
+    return tw.filter(w=>name.includes(w));
+}
+
+// 专用进项关键词：含这些词的进项不能用于低可信/兜底匹配（除非销项也含该词）
+const exclusiveKw=['PE管','桥架','直接','三通','阀门','PVC','日丰','管材','管件','弯头','法兰','接头','堵头','四通','变径','异径','补芯','绕管','穿线管','波纹管','KBG','JDG','SC管','镀锌管','焊管','无缝管','螺旋管','铸铁管','PPR','PE盘管','钢塑复合管'];
+function isExclusive(jxName){
+    return exclusiveKw.some(k=>jxName.includes(k));
+}
+function hasSameExclusive(kpName,jxName){
+    return exclusiveKw.some(k=>kpName.includes(k)&&jxName.includes(k));
+}
+
+// 模糊匹配打分
+function fz(sn,pn){
+    const cl=s=>s.replace(/[\s（）()\[\]【】]/g,'').replace(/（[^）]*）/g,'').replace(/\([^)]*\)/g,'').replace(/【[^】]*】/g,'');
+    const s=cl(sn),p=cl(pn);
+    if(s===p)return{score:100,m:'完全相同'};
+    if(s.length>=2&&p.length>=2){if(p.includes(s))return{score:75,m:'进项包含销项品名'};if(s.includes(p))return{score:70,m:'销项包含进项品名'}}
+    const sw=['热镀锌','冷镀锌','镀锌','不锈钢','国标','加厚','加长','重型','轻型','迷你','高档','防锈'];
+    let ss=s,pp=p;sw.forEach(w=>{ss=ss.replace(w,'');pp=pp.replace(w,'')});
+    if(ss&&pp&&ss===pp)return{score:65,m:'去修饰词后相同'};
+    if(ss.length>=2&&pp.length>=2&&(pp.includes(ss)||ss.includes(pp)))return{score:58,m:'去修饰词后包含'};
+    const sW=(s.match(/[\u4e00-\u9fffA-Za-z0-9°Φφ]+/g)||[]).filter(w=>w.length>=2);
+    const pW=(p.match(/[\u4e00-\u9fffA-Za-z0-9°Φφ]+/g)||[]).filter(w=>w.length>=2);
+    if(sW.length&&pW.length){const cm=sW.filter(w=>pW.includes(w));const ov=cm.length/Math.max(sW.length,pW.length);if(ov>=.6)return{score:55,m:`关键词重叠${(ov*100|0)}%`};if(ov>=.4)return{score:45,m:`关键词重叠${(ov*100|0)}%`}}
+    return null;
+}
+
+function setupUpload(){
+    [{z:'kpZone',c:'kpCard',i:'kpInput',info:'kpInfo',n:'kpName',m:'kpMeta',dk:'kp'},
+     {z:'jxZone',c:'jxCard',i:'jxInput',info:'jxInfo',n:'jxName',m:'jxMeta',dk:'jx'}].forEach(cfg=>{
+        const ze=document.getElementById(cfg.z),ce=document.getElementById(cfg.c),ie=document.getElementById(cfg.i);
+        ze.addEventListener('click',()=>ie.click());
+        ze.addEventListener('dragover',e=>{e.preventDefault();ce.classList.add('dragover')});
+        ze.addEventListener('dragleave',()=>ce.classList.remove('dragover'));
+        ze.addEventListener('drop',e=>{e.preventDefault();ce.classList.remove('dragover');if(e.dataTransfer.files.length)hf(e.dataTransfer.files[0],cfg)});
+        ie.addEventListener('change',e=>{if(e.target.files.length)hf(e.target.files[0],cfg)});
+    });
+    function hf(file,cfg){
+        const ext=file.name.split('.').pop().toLowerCase();
+        if(!['xlsx','xls','csv'].includes(ext)){toast('请上传Excel或CSV','error');return}
+        const r=new FileReader();
+        r.onload=e=>{try{const d=ext==='csv'?XLSX.read(e.target.result,{type:'string',cellDates:true}):XLSX.read(e.target.result,{type:'array'});const j=XLSX.utils.sheet_to_json(d.Sheets[d.SheetNames[0]],{defval:''});if(cfg.dk==='kp')kpData=j;else jxData=j;document.getElementById(cfg.info).classList.add('show');document.getElementById(cfg.n).textContent=file.name;document.getElementById(cfg.m).textContent=`共${j.length}行数据`;document.getElementById('analyzeBtn').disabled=!(kpData.length&&jxData.length);toast(file.name+' 上传成功','success')}catch(err){toast('解析失败','error')}};
+        r.readAsArrayBuffer(file);
+    }
+}
+function clearAll(){kpData=[];jxData=[];result=null;['kpInfo','jxInfo'].forEach(id=>document.getElementById(id).classList.remove('show'));['kpInput','jxInput'].forEach(id=>document.getElementById(id).value='');document.getElementById('analyzeBtn').disabled=true;document.getElementById('resultsSection').style.display='none'}
+function switchTab(i){curTab=i;document.querySelectorAll('.tab-btn').forEach((b,j)=>b.classList.toggle('active',j===i));document.querySelectorAll('.tab-content').forEach((c,j)=>c.classList.toggle('active',j===i))}
+
+function runAnalysis(){
+    if(!kpData.length||!jxData.length){toast('请先上传两个文件','error');return}
+
+    // ===== 检测进项数据格式 =====
+    const sampleRow=jxData[0]||{};
+    const isSimple=!!(sampleRow['产品名']&&sampleRow['进项金额']&&!sampleRow['货物或应税劳务名称']);
+
+    // ===== 费用票关键词（更全面） =====
+    const expKw=['客运','机票','汽油','柴油','餐饮','住宿','运输','物流','保险','维修','广告','代理','经纪','电信','娱乐','生活服务','旅游','租赁','会展','信息系统','代理记账','预付卡','成品油','加油','服务费','票价','轿车','药品','代订','充值','油费','油款','过路','停车','拖车','年检','车险','审车','打车','网约','差旅','培训','咨询','审计','评估','检测','检验','认证','公证','诉讼','仲裁','法律','装修','物业','快递','邮政','通信','宽带','网络费','水费','电费','燃气','劳务','外包','设计费','勘察','监理','测绘'];
+
+    // ===== 过滤有效进项 =====
+    let validJx;
+    if(isSimple){
+        // 新格式：产品名/规格型号/进项数量/进项金额/核查结果（已经是处理好的数据）
+        validJx=jxData.filter(row=>{
+            const nm=String(row['产品名']||'').trim();
+            if(!nm)return false;
+            if(expKw.some(k=>nm.includes(k)))return false;
+            return true;
+        });
+    }else{
+        // 旧格式：27列完整进项明细
+        validJx=jxData.filter(row=>{
+            const st=String(row['发票状态']||'');const ip=String(row['是否正数发票']||'');
+            if(st.includes('红冲')&&st.includes('全额'))return false;
+            if(ip==='否')return false;
+            const nm=pureName(row['货物或应税劳务名称']||'');
+            if(expKw.some(k=>nm.includes(k)))return false;
+            return true;
+        });
+    }
+
+    // ===== 汇总进项 by pureName|spec =====
+    const jxMap={},jxByName={},jxByCat={};
+    if(isSimple){
+        validJx.forEach(row=>{
+            const pn=String(row['产品名']||'').trim();
+            const cat=''; // 新格式无分类
+            const sp=String(row['规格型号']||'').trim();
+            const amt=parseFloat(row['进项金额'])||0;
+            const qty=parseFloat(row['进项数量'])||0;
+            const key=pn+'|'+sp;
+            if(!jxMap[key])jxMap[key]={name:pn,category:cat,spec:sp,totalAmount:0,totalQty:0,totalPrc:0,products:[],avgPrice:0};
+            jxMap[key].totalAmount+=amt;jxMap[key].totalQty+=qty;jxMap[key].products.push(row);
+            if(!jxByName[pn])jxByName[pn]={name:pn,category:cat,totalAmount:0,specs:[]};
+            jxByName[pn].totalAmount+=amt;
+            if(!jxByName[pn].specs.find(s=>s.name===pn&&s.spec===sp))jxByName[pn].specs.push(jxMap[key]);
+        });
+    }else{
+        validJx.forEach(row=>{
+            const rn=String(row['货物或应税劳务名称']||'');
+            const pn=pureName(rn),cat=category(rn),sp=String(row['规格型号']||'').trim();
+            const amt=parseFloat(row['金额'])||0,qty=parseFloat(row['数量'])||0,prc=parseFloat(row['单价'])||0;
+            const key=pn+'|'+sp;
+            if(!jxMap[key])jxMap[key]={name:pn,category:cat,spec:sp,totalAmount:0,totalQty:0,totalPrc:0,products:[],avgPrice:0};
+            jxMap[key].totalAmount+=amt;jxMap[key].totalQty+=qty;jxMap[key].totalPrc+=prc;jxMap[key].products.push(row);
+            if(!jxByName[pn])jxByName[pn]={name:pn,category:cat,totalAmount:0,specs:[]};
+            jxByName[pn].totalAmount+=amt;
+            if(!jxByName[pn].specs.find(s=>s.name===pn&&s.spec===sp))jxByName[pn].specs.push(jxMap[key]);
+            const c=cat||'未分类';
+            if(!jxByCat[c])jxByCat[c]=[];
+            if(!jxByCat[c].find(x=>x===jxMap[key]))jxByCat[c].push(jxMap[key]);
+        });
+    }
+    Object.values(jxMap).forEach(j=>{j.avgPrice=j.totalQty>0?j.totalAmount/j.totalQty:(j.totalPrc>0?j.totalPrc:0)});
+
+    // ===== 开票清单逐行 =====
+    const kpItems=kpData.map(row=>({
+        orig:row['产品名']||row['货物或应税劳务名称']||'',
+        name:pureName(row['产品名']||row['货物或应税劳务名称']||''),
+        cat:category(row['产品名']||row['货物或应税劳务名称']||''),
+        spec:String(row['规格型号']||'').trim(),
+        qty:parseFloat(row['数量'])||0,
+        price:parseFloat(row['单价'])||0,
+        amount:parseFloat(row['金额'])||0
+    }));
+
+    // 汇总开票 by name|spec（用于匹配，不互斥）
+    const kpByProd={};
+    kpItems.forEach(it=>{
+        const key=it.name+'|'+it.spec;
+        if(!kpByProd[key])kpByProd[key]={pureName:it.name,category:it.cat,spec:it.spec,totalAmount:0,count:0,items:[]};
+        kpByProd[key].totalAmount+=it.amount;kpByProd[key].count++;kpByProd[key].items.push(it);
+    });
+
+    // ===== 三级匹配（允许多个开票产品匹配同一进项） =====
+    const high=[],med=[],low=[];
+    const matchLookup={}; // kpName|spec -> {jxKey, confidence, matchType, detail, fs}
+
+    function doMatch(it){
+        const mk=it.pureName+'|'+it.spec;
+        // 1. 别名匹配 → 高可信
+        const ak=it.pureName+'|'+it.spec;
+        if(aliasMap[ak]){
+            const jk=aliasMap[ak];
+            if(jxMap[jk]){
+                matchLookup[mk]={jxKey:jk,confidence:'high',matchType:'alias',detail:'别名匹配'};
+                high.push({...it,matchType:'alias',confidence:'high',matchedJx:jxMap[jk],jxKey:jk,detail:'别名匹配'});
+                return;
+            }
+        }
+        // 2. 精确匹配（品名+规格） → 高可信
+        const ek=it.pureName+'|'+it.spec;
+        if(jxMap[ek]){
+            matchLookup[mk]={jxKey:ek,confidence:'high',matchType:'exact',detail:'精确匹配'};
+            high.push({...it,matchType:'exact',confidence:'high',matchedJx:jxMap[ek],jxKey:ek,detail:'精确匹配'});
+            return;
+        }
+        // 3. 品名相同，规格不同 → 中可信
+        if(jxByName[it.pureName]){
+            const av=jxByName[it.pureName].specs.sort((a,b)=>b.totalAmount-a.totalAmount)[0];
+            const jk=av.name+'|'+av.spec;
+            matchLookup[mk]={jxKey:jk,confidence:'medium',matchType:'name_same',detail:'品名相同，进项规格: '+(av.spec||'无')};
+            med.push({...it,matchType:'name_same',confidence:'medium',matchedJx:jxMap[jk],jxKey:jk,detail:'品名相同，进项规格: '+(av.spec||'无')});
+            return;
+        }
+        // 4. 品名模糊匹配 → 中可信
+        let bm=null,bs=0,bk='',bml='';
+        Object.entries(jxMap).forEach(([k,v])=>{
+            const f=fz(it.pureName,v.name);
+            if(f&&f.score>bs){bs=f.score;bm=v;bk=k;bml=f.m}
+        });
+        if(bm&&bs>=45){
+            matchLookup[mk]={jxKey:bk,confidence:'medium',matchType:'fuzzy',detail:bml,fs:bs};
+            med.push({...it,matchType:'fuzzy',confidence:'medium',matchedJx:bm,jxKey:bk,detail:bml,fs:bs});
+            return;
+        }
+        // 5. 同类型匹配（类型关键词重叠） → 中可信
+        //   例：销项"钉子"含"钉" → 进项"钢排钉"也含"钉" → 同类型，中可信
+        const tk=typeKeys(it.pureName);
+        const sk=kw(it.pureName);
+        if(tk.length>0){
+            let bestType=null,bestKey='',bestAmt=0,bestDetail='';
+            Object.entries(jxMap).forEach(([k,v])=>{
+                if(isExclusive(v.name)&&!hasSameExclusive(it.pureName,v.name))return;
+                const jxTk=typeKeys(v.name);
+                const overlap=tk.filter(t=>jxTk.includes(t));
+                if(overlap.length>0&&v.totalAmount>bestAmt){
+                    bestType=v;bestKey=k;bestAmt=v.totalAmount;
+                    bestDetail='同类型: '+overlap.join(',');
+                }
+            });
+            if(bestType){
+                matchLookup[mk]={jxKey:bestKey,confidence:'medium',matchType:'type_match',detail:bestDetail};
+                med.push({...it,matchType:'type_match',confidence:'medium',matchedJx:bestType,jxKey:bestKey,detail:bestDetail});
+                return;
+            }
+        }
+        // 6. 关键词字重叠（品名不完全匹配但有共同词） → 低可信
+        //   这是类型也对不上、品名也对不上、规格也对不上的情况
+        Object.entries(jxMap).forEach(([k,v])=>{
+            if(isExclusive(v.name)&&!hasSameExclusive(it.pureName,v.name))return;
+            const pk=new Set(kw(v.name));
+            const ca=sk.filter(w=>pk.has(w));
+            const c2=ca.filter(w=>w.length>=2);
+            const c1=ca.filter(w=>w.length===1);
+            const sc=(it.category&&v.category&&it.category===v.category);
+            let s=0,ml='';
+            if(c2.length>=2){s=40;ml='共同词: '+c2.slice(0,3).join(',')}
+            else if(c2.length>=1){s=25;ml='共同词: '+c2.join(',')}
+            else if(c1.length>=3){s=20;ml=`多字重叠(${c1.length}字)`}
+            else if(c1.length>=2){s=15;ml='字重叠: '+c1.slice(0,3).join(',')}
+            else if(c1.length>=1&&sc){s=12;ml='同分类+字重叠'}
+            else if(sc){s=8;ml='仅同分类'}
+            if(s>bs){bs=s;bm=v;bk=k;bml=ml}
+        });
+        if(bm&&bs>=8){
+            matchLookup[mk]={jxKey:bk,confidence:'low',matchType:'low_fuzzy',detail:bml,fs:bs};
+            low.push({...it,matchType:'low_fuzzy',confidence:'low',matchedJx:bm,jxKey:bk,detail:bml,fs:bs});
+            return;
+        }
+        // 7. 同分类兜底 → 低可信
+        const cat=it.category||'未分类';
+        if(jxByCat[cat]&&jxByCat[cat].length>0){
+            const catAvail=jxByCat[cat].filter(jx=>!isExclusive(jx.name)||hasSameExclusive(it.pureName,jx.name));
+            if(catAvail.length>0){
+                const best=catAvail.sort((a,b)=>b.totalAmount-a.totalAmount)[0];
+                const jk=best.name+'|'+best.spec;
+                matchLookup[mk]={jxKey:jk,confidence:'low',matchType:'category',detail:'同分类匹配'};
+                low.push({...it,matchType:'category',confidence:'low',matchedJx:jxMap[jk],jxKey:jk,detail:'同分类匹配'});
+                return;
+            }
+        }
+        // 8. 终极兜底 → 低可信
+        const nonExclusiveJx=Object.entries(jxMap).filter(([k,v])=>!isExclusive(v.name)||hasSameExclusive(it.pureName,v.name)).sort((a,b)=>b[1].totalAmount-a[1].totalAmount);
+        if(nonExclusiveJx.length>0){
+            matchLookup[mk]={jxKey:nonExclusiveJx[0][0],confidence:'low',matchType:'fallback',detail:'兜底匹配'};
+            low.push({...it,matchType:'fallback',confidence:'low',matchedJx:nonExclusiveJx[0][1],jxKey:nonExclusiveJx[0][0],detail:'兜底匹配'});
+            return;
+        }
+        matchLookup[mk]={jxKey:null,confidence:'low',matchType:'none',detail:'无进项数据'};
+        low.push({...it,matchType:'none',confidence:'low',matchedJx:null,detail:'无进项数据'});
+    }
+
+    Object.values(kpByProd).forEach(doMatch);
+
+    // 待确认建议
+    const sgs=[];
+    [...med.filter(m=>m.matchType==='fuzzy'||m.matchType==='type_match'),...low.filter(l=>l.matchType==='low_fuzzy'||l.matchType==='category'||l.matchType==='fallback')].forEach(it=>{
+        if(it.matchedJx)sgs.push({item:it,suggestion:it.matchedJx,score:it.fs||0,method:it.detail||''});
+    });
+
+    // ===== 开票建议：逐行对应，每行替代完整，总金额=开票清单总金额 =====
+    const totalOrig=kpItems.reduce((s,i)=>s+i.amount,0);
+
+    // 进项余额追踪
+    const jxBal={};
+    Object.entries(jxMap).forEach(([k,v])=>{jxBal[k]={amt:v.totalAmount,qty:v.totalQty}});
+
+    const advices=kpItems.map(it=>{
+        const mk=it.name+'|'+it.spec;
+        let match=matchLookup[mk];
+        let jxKey=match?match.jxKey:null;
+        let confidence=match?match.confidence:'low';
+        let matchType=match?match.matchType:'none';
+        let matchDetail=match?match.detail:'';
+
+        // 如果匹配的进项没余额了，找有余额的替代（同类型优先，专用进项排除）
+        if(!jxKey||!jxBal[jxKey]||jxBal[jxKey].amt<=0.01){
+            const cat=it.cat||'未分类';
+            const tk=typeKeys(it.name);
+            let found=false;
+            // 1. 同分类有余额（排除专用）
+            if(jxByCat[cat]){
+                const catAvail=jxByCat[cat].filter(jx=>(!isExclusive(jx.name)||hasSameExclusive(it.name,jx.name))&&jxBal[jx.name+'|'+jx.spec]&&jxBal[jx.name+'|'+jx.spec].amt>0.01);
+                if(catAvail.length>0){
+                    const jx=catAvail.sort((a,b)=>b.totalAmount-a.totalAmount)[0];
+                    const k2=jx.name+'|'+jx.spec;
+                    jxKey=k2;confidence='low';matchType='category_bal';matchDetail='同分类余额匹配';found=true;
+                }
+            }
+            // 2. 同类型有余额（排除专用）
+            if(!found&&tk.length>0){
+                let bestBalKey='',bestBalAmt=0;
+                for(const[k2,b] of Object.entries(jxBal)){
+                    if(b.amt<=0.01)continue;
+                    const jxName=jxMap[k2]?jxMap[k2].name:'';
+                    if(isExclusive(jxName)&&!hasSameExclusive(it.name,jxName))continue;
+                    const jxTk=typeKeys(jxName);
+                    if(tk.some(t=>jxTk.includes(t))&&b.amt>bestBalAmt){
+                        bestBalKey=k2;bestBalAmt=b.amt;
+                    }
+                }
+                if(bestBalKey){jxKey=bestBalKey;confidence='low';matchType='type_bal';matchDetail='同类型余额匹配';found=true;}
+            }
+            // 3. 任何有余额（排除专用）
+            if(!found){
+                for(const[k2,b] of Object.entries(jxBal)){
+                    if(b.amt<=0.01)continue;
+                    const jxName=jxMap[k2]?jxMap[k2].name:'';
+                    if(isExclusive(jxName)&&!hasSameExclusive(it.name,jxName))continue;
+                    jxKey=k2;confidence='low';matchType='fallback_bal';matchDetail='余额分配匹配';found=true;break;
+                }
+            }
+        }
+
+        let subName='',subSpec='',subPrice=0,subQty=0,subAmount=0;
+        let jxTotalAmt=0;
+
+        if(jxKey&&jxMap[jxKey]&&jxBal[jxKey]&&jxBal[jxKey].amt>0.01){
+            const jx=jxMap[jxKey];
+            const bal=jxBal[jxKey];
+            subName=jx.name;
+            subSpec=jx.spec||'';
+            jxTotalAmt=jx.totalAmount;
+
+            // 替代金额=原金额，数量取整，单价反算
+            subAmount=it.amount;
+            const avgP=jx.avgPrice>0?jx.avgPrice:it.price;
+            subQty=avgP>0?Math.round(it.amount/avgP):Math.round(it.qty);
+            if(subQty<1)subQty=1;
+
+            // 检查进项数量余额
+            if(bal.qty>0&&subQty>bal.qty){
+                subQty=Math.max(1,Math.floor(bal.qty));
+            }
+
+            // 反算单价：金额÷数量
+            subPrice=subQty>0?subAmount/subQty:0;
+
+            // 扣减余额
+            bal.amt-=subAmount;
+            bal.qty-=subQty;
+        }else{
+            subName=it.name;
+            subSpec=it.spec||'';
+            subQty=Math.round(it.qty)||1;
+            subAmount=it.amount;
+            subPrice=subQty>0?subAmount/subQty:0;
+            if(!matchDetail)matchDetail='无可用进项(兜底)';
+        }
+
+        // 状态判断
+        const minReq=it.amount/1.185;
+        let status,statusText,gap=0;
+        if(subAmount>=it.amount-0.01){
+            status=confidence==='high'?'success':confidence==='medium'?'success':'warning';
+            statusText=confidence==='high'?'✅ 可开':confidence==='medium'?'⚠️ 可开(中可信)':'⚠️ 可开(低可信)';
+        }else{
+            gap=it.amount-subAmount;
+            status='warning';
+            statusText='⚠️ 进项部分覆盖';
+        }
+
+        return{
+            origName:it.orig||it.name,pureName:it.name,spec:it.spec,qty:it.qty,price:it.price,amount:it.amount,
+            subName,subSpec,subQty:Math.round(subQty),subPrice:Math.round(subPrice*10000)/10000,subAmount,
+            jxKey,jxTotalAmt,confidence,matchType,matchDetail,
+            minReq,status,statusText,gap
+        };
+    });
+
+    // ===== 总金额对齐（理论上每行金额=原金额，已天然一致，这里做校验兜底） =====
+    const totalSub=advices.reduce((s,a)=>s+a.subAmount,0);
+    let diff=totalOrig-totalSub;
+    if(Math.abs(diff)>0.01){
+        // 极端情况：微调最后一行单价补齐
+        const last=advices[advices.length-1];
+        if(last.subQty>0){
+            last.subPrice=Math.round((last.subAmount+diff)/last.subQty*10000)/10000;
+            last.subAmount=last.subQty*last.subPrice;
+        }
+    }
+
+    // 按状态排序
+    const so={danger:0,warning:1,success:2};
+    advices.sort((a,b)=>so[a.status]-so[b.status]);
+
+    const ha=high.reduce((s,i)=>s+i.totalAmount,0);
+    const ma=med.reduce((s,i)=>s+i.totalAmount,0);
+    const la=low.reduce((s,i)=>s+i.totalAmount,0);
+
+    // 剩余进项
+    const avail=[];Object.entries(jxMap).forEach(([k,v])=>{
+        const bal=jxBal[k]||{amt:0};
+        if(bal.amt>0.01)avail.push({...v,remainAmt:bal.amt,remainQty:bal.qty});
+    });
+
+    result={totalItems:kpItems.length,totalAmount:totalOrig,hc:high.length,ha,mc:med.length,ma,lc:low.length,la,high,med,low,sgs,avail,advices,
+        totalSub:advices.reduce((s,a)=>s+a.subAmount,0)};
+
+    document.getElementById('highBadge').textContent=high.length;
+    document.getElementById('medBadge').textContent=med.length;
+    document.getElementById('lowBadge').textContent=low.length;
+    document.getElementById('sgBadge').textContent=sgs.length;
+    document.getElementById('tab0').innerHTML=rOverview();
+    document.getElementById('tab1').innerHTML=rConfTable(high,'高','🟢');
+    document.getElementById('tab2').innerHTML=rConfTable(med,'中','🟡');
+    document.getElementById('tab3').innerHTML=rConfTable(low,'低','🔴');
+    document.getElementById('tab4').innerHTML=rSgs();
+    document.getElementById('tab5').innerHTML=rAvail();
+    document.getElementById('tab6').innerHTML=rAlias();
+    document.getElementById('tab7').innerHTML=rAdvice();
+    document.getElementById('resultsSection').style.display='block';
+    curTab=0;switchTab(0);
+    toast(`分析完成！高${high.length} 中${med.length} 低${low.length}，全部已匹配`,'success');
+}
+
+function rOverview(){
+    const r=result,p=v=>r.totalAmount>0?(v/r.totalAmount*100).toFixed(1):0;
+    return`<div class="stats-grid">
+        <div class="stat-card"><div class="value">${r.totalItems}</div><div class="label">待开票行数</div></div>
+        <div class="stat-card"><div class="value">¥${fmt(r.totalAmount)}</div><div class="label">待开票总金额</div></div>
+        <div class="stat-card success"><div class="value">${r.hc}</div><div class="label">🟢 高可信</div></div>
+        <div class="stat-card warning"><div class="value">${r.mc}</div><div class="label">🟡 中可信</div></div>
+        <div class="stat-card danger"><div class="value">${r.lc}</div><div class="label">🔴 低可信</div></div>
+    </div><div class="card"><div class="card-header"><span class="card-title">📊 匹配金额分布</span></div>
+    <div style="margin:20px 0">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px"><span style="width:80px;color:#10b981;font-weight:600">🟢 高可信</span><div style="flex:1;height:24px;background:#e2e8f0;border-radius:12px;overflow:hidden"><div style="height:100%;width:${p(r.ha)}%;background:#10b981;border-radius:12px"></div></div><span style="min-width:80px;text-align:right;font-weight:600">¥${fmt(r.ha)} (${p(r.ha)}%)</span></div>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px"><span style="width:80px;color:#f59e0b;font-weight:600">🟡 中可信</span><div style="flex:1;height:24px;background:#e2e8f0;border-radius:12px;overflow:hidden"><div style="height:100%;width:${p(r.ma)}%;background:#f59e0b;border-radius:12px"></div></div><span style="min-width:80px;text-align:right;font-weight:600">¥${fmt(r.ma)} (${p(r.ma)}%)</span></div>
+        <div style="display:flex;align-items:center;gap:12px"><span style="width:80px;color:#ef4444;font-weight:600">🔴 低可信</span><div style="flex:1;height:24px;background:#e2e8f0;border-radius:12px;overflow:hidden"><div style="height:100%;width:${p(r.la)}%;background:#ef4444;border-radius:12px"></div></div><span style="min-width:80px;text-align:right;font-weight:600">¥${fmt(r.la)} (${p(r.la)}%)</span></div>
+    </div><p style="color:#64748b;font-size:13px;margin-top:12px">毛利18.5%，进项 ≥ 销售金额÷1.185 即够开 | 开票建议总金额: ¥${fmt(r.totalSub)}</p></div>`;
+}
+
+function rConfTable(items,c,e){
+    if(!items.length)return`<div class="empty-state"><div class="icon">${e}</div><div>暂无${c}可信匹配</div></div>`;
+    return`<div class="card"><div class="card-header"><span class="card-title">${e} ${c}可信匹配</span><span>${items.length}个</span></div>
+    <div class="scrollable-table"><table><thead><tr><th>方式</th><th>原品名</th><th>规格</th><th>匹配进项</th><th>进项规格</th><th>销项金额</th><th>进项金额</th><th>说明</th><th>够开?</th></tr></thead>
+    <tbody>${items.map(it=>{
+        const mr=it.totalAmount/1.185,en=it.matchedJx&&it.matchedJx.totalAmount>=mr;
+        const ml=it.matchType==='exact'?'精确':it.matchType==='alias'?'别名':it.matchType==='name_same'?'品名同':it.matchType==='type_match'?'同类型':it.matchType==='category'?'同分类':it.matchType==='fallback'?'兜底':'模糊';
+        const tc=it.matchType==='exact'||it.matchType==='alias'?'tag-success':it.matchType==='name_same'||it.matchType==='type_match'?'tag-info':'tag-warning';
+        return`<tr><td><span class="tag ${tc}">${ml}</span></td><td><strong>${it.pureName}</strong></td><td>${it.spec||'-'}</td>
+        <td>${it.matchedJx?it.matchedJx.name:'-'}</td>
+        <td>${it.matchedJx?(it.matchedJx.spec||'-'):'-'}</td>
+        <td class="money">${fmt(it.totalAmount)}</td>
+        <td class="money" style="color:${en?'#10b981':'#ef4444'}">${it.matchedJx?fmt(it.matchedJx.totalAmount):'0.00'}</td>
+        <td style="font-size:12px;color:#64748b">${it.detail||'-'}</td>
+        <td><span class="tag tag-${en?'success':'danger'}">${en?'✅':'❌'}</span></td></tr>`}).join('')}</tbody></table></div></div>`;
+}
+
+function rSgs(){
+    const r=result;if(!r.sgs.length)return'<div class="empty-state"><div class="icon">🤔</div><div>暂无待确认</div></div>';
+    return`<div class="card"><div class="card-header"><span class="card-title">🤔 待确认</span><span>确认后存入别名表</span></div>
+    <div class="scrollable-table"><table><thead><tr><th>销项品名</th><th>规格</th><th>建议进项</th><th>进项规格</th><th>说明</th><th>操作</th></tr></thead>
+    <tbody>${r.sgs.map((s,i)=>`<tr><td><strong>${s.item.pureName}</strong></td><td>${s.item.spec||'-'}</td><td>${s.suggestion.name}</td><td>${s.suggestion.spec||'-'}</td>
+    <td><span class="tag tag-warning">${s.method}</span></td><td><button class="btn btn-success btn-sm" onclick="confirmSg(${i})">✅确认</button> <button class="btn btn-danger btn-sm" onclick="ignoreSg(${i})">❌忽略</button></td></tr>`).join('')}</tbody></table></div></div>`;
+}
+function confirmSg(i){const s=result.sgs[i];aliasMap[s.item.pureName+'|'+s.item.spec]=s.suggestion.name+'|'+s.suggestion.spec;localStorage.setItem('kaipiao_alias_map',JSON.stringify(aliasMap));toast('已确认','success');runAnalysis()}
+function ignoreSg(i){result.sgs.splice(i,1);toast('已忽略','info');document.getElementById('tab4').innerHTML=rSgs();document.getElementById('sgBadge').textContent=result.sgs.length}
+
+function rAvail(){
+    const r=result;if(!r.avail.length)return'<div class="empty-state"><div class="icon">📦</div><div>进项已全部分配</div></div>';
+    return`<div class="card"><div class="card-header"><span class="card-title">📦 进项余额</span></div>
+    <div class="scrollable-table"><table><thead><tr><th>产品名</th><th>规格</th><th>剩余金额</th><th>原始金额</th></tr></thead>
+    <tbody>${r.avail.map(j=>`<tr><td>${j.name}</td><td>${j.spec||'-'}</td><td class="money" style="color:var(--success)">${fmt(j.remainAmt)}</td><td class="money">${fmt(j.totalAmount)}</td></tr>`).join('')}</tbody></table></div></div>`;
+}
+function rAlias(){
+    const es=Object.entries(aliasMap);if(!es.length)return'<div class="empty-state"><div class="icon">🔗</div><div>暂无别名</div></div>';
+    return`<div class="card"><div class="card-header"><span class="card-title">🔗 别名表</span><span>${es.length}条</span></div>
+    ${es.map(([k,v])=>{const[n,s]=k.split('|'),[jn,js]=v.split('|');return`<div class="alias-item"><div><strong>${n}</strong>${s?`<small style="color:#64748b"> (${s})</small>`:''}</div><span class="arrow">→</span><div><strong>${jn}</strong>${js?`<small style="color:#64748b"> (${js})</small>`:''}</div><button class="btn btn-danger btn-sm" onclick="delAlias('${k}')">删除</button></div>`}).join('')}
+    <div style="margin-top:16px;text-align:center"><button class="btn btn-danger" onclick="clearAlias()">清空</button></div></div>`;
+}
+function delAlias(k){delete aliasMap[k];localStorage.setItem('kaipiao_alias_map',JSON.stringify(aliasMap));toast('已删除','success');runAnalysis()}
+function clearAlias(){if(!confirm('确定清空？'))return;aliasMap={};localStorage.setItem('kaipiao_alias_map',JSON.stringify(aliasMap));toast('已清空','success');runAnalysis()}
+
+function rAdvice(){
+    const r=result;if(!r.advices.length)return'<div class="empty-state"><div class="icon">📋</div><div>请先分析</div></div>';
+    const totalAdv=r.advices.reduce((s,a)=>s+a.subAmount,0);
+    const matchPct=r.totalAmount>0?(totalAdv/r.totalAmount*100).toFixed(2):0;
+    return`<div class="card"><div class="card-header"><span class="card-title">📋 开票建议</span><span>行数=${r.advices.length} | 原总额=¥${fmt(r.totalAmount)} | 建议总额=¥${fmt(totalAdv)} | 匹配率=${matchPct}%</span></div>
+    <div class="scrollable-table"><table>
+    <thead><tr><th>状态</th><th>原品名</th><th>规格</th><th>数量</th><th>单价</th><th>金额</th><th>替代品名</th><th>替代规格</th><th>替代数量</th><th>替代单价</th><th>替代金额</th><th>可信度</th><th>匹配说明</th></tr></thead>
+    <tbody>${r.advices.map(a=>{
+        let rc=a.status==='danger'?'error-row':a.status==='warning'?'highlight-row':'success-row';
+        const ct=a.confidence==='high'?'<span class="tag tag-success">高</span>':a.confidence==='medium'?'<span class="tag tag-warning">中</span>':'<span class="tag tag-danger">低</span>';
+        return`<tr class="${rc}">
+        <td><span class="tag tag-${a.status==='success'?'success':a.status==='danger'?'danger':'warning'}">${a.statusText}</span></td>
+        <td><strong>${a.pureName}</strong></td><td>${a.spec||'-'}</td><td>${a.qty}</td><td class="money">${a.price?a.price.toFixed(2):'-'}</td><td class="money">${fmt(a.amount)}</td>
+        <td><strong>${a.subName}</strong></td><td>${a.subSpec||'-'}</td><td>${a.subQty}</td><td class="money">${a.subPrice.toFixed(2)}</td><td class="money">${fmt(a.subAmount)}</td>
+        <td>${ct}</td><td style="font-size:12px;color:#64748b">${a.matchDetail||'-'}</td></tr>`}).join('')}</tbody></table></div></div>`;
+}
+
+// ===== 导出 =====
+function exportCurrentTab(){
+    const ns=['匹配概览','高可信','中可信','低可信','待确认','进项余额','别名表','开票建议'];
+    const t=document.querySelectorAll('.tab-content')[curTab].querySelector('table');
+    if(!t){toast('无数据','error');return}expTbl(t,ns[curTab]);
+}
+async function exportAll(){
+    if(!result)return;const r=result;const wb=new ExcelJS.Workbook();wb.creator='张洪杰';wb.created=new Date();
+    const hs={bold:true,color:{argb:'FFFFFFFF'},size:11},hf={type:'pattern',pattern:'solid',fgColor:{argb:'FF0891B2'}},bd={style:'thin',color:{argb:'FFD0D0D0'}};
+    function addS(nm,hd,rows){const ws=wb.addWorksheet(nm);hd.forEach((h,i)=>{const c=ws.getCell(1,i+1);c.value=h;c.font=hs;c.fill=hf;c.alignment={horizontal:'center'};c.border=bd});rows.forEach((row,ri)=>row.forEach((v,ci)=>{const c=ws.getCell(ri+2,ci+1);c.value=v;c.border=bd;if(typeof v==='number')c.numFmt='#,##0.00'}));ws.columns.forEach(col=>col.width=18)}
+    addS('匹配概览',['项目','数量','金额'],[['高可信',r.hc,r.ha],['中可信',r.mc,r.ma],['低可信',r.lc,r.la],['合计',r.totalItems,r.totalAmount]]);
+
+    const all=[...r.high,...r.med,...r.low];
+    addS('全部匹配',['可信度','方式','原品名','规格','匹配进项','进项规格','销项金额','进项金额','说明'],
+        all.map(m=>[m.confidence==='high'?'高':m.confidence==='medium'?'中':'低',m.matchType==='exact'?'精确':m.matchType==='alias'?'别名':m.matchType==='name_same'?'品名同':m.matchType==='category'?'同分类':m.matchType==='fallback'?'兜底':'模糊',m.pureName,m.spec||'',m.matchedJx?m.matchedJx.name:'',m.matchedJx?(m.matchedJx.spec||')'):'',m.totalAmount,m.matchedJx?m.matchedJx.totalAmount:0,m.detail||'']));
+
+    // 开票建议
+    addS('开票建议',['状态','原品名','规格','数量','单价','金额','替代品名','替代规格','替代数量','替代单价','替代金额','可信度','匹配说明'],
+        r.advices.map(a=>[a.statusText,a.pureName,a.spec||'',a.qty,a.price,a.amount,a.subName,a.subSpec||'',Math.round(a.subQty*100)/100,Math.round(a.subPrice*100)/100,a.subAmount,a.confidence==='high'?'高':a.confidence==='medium'?'中':'低',a.matchDetail||'']));
+
+    const buf=await wb.xlsx.writeBuffer();saveAs(new Blob([buf]),`开票建议_${new Date().toLocaleDateString('zh-CN').replace(/\//g,'-')}.xlsx`);toast('导出成功！','success');
+}
+function expTbl(table,sn){
+    if(!table)return;const wb=new ExcelJS.Workbook();const ws=wb.addWorksheet(sn);
+    table.querySelectorAll('thead th').forEach((th,i)=>{const c=ws.getCell(1,i+1);c.value=th.textContent.trim();c.font={bold:true,color:{argb:'FFFFFFFF'}};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF0891B2'}}});
+    table.querySelectorAll('tbody tr').forEach((tr,ri)=>{tr.querySelectorAll('td').forEach((td,ci)=>{const c=ws.getCell(ri+2,ci+1);const t=td.textContent.trim();const n=parseFloat(t.replace(/[,¥￥$\s\-]/g,''));if(!isNaN(n)&&t.match(/^[\d,.¥￥]/)){c.value=n;c.numFmt='#,##0.00'}else c.value=t})});
+    ws.columns.forEach(col=>col.width=16);wb.xlsx.writeBuffer().then(b=>{saveAs(new Blob([b]),sn+'_'+new Date().toLocaleDateString('zh-CN').replace(/\//g,'-')+'.xlsx');toast('导出成功！','success')});
+}
+
+document.addEventListener('DOMContentLoaded',()=>{setupUpload();if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{})});
+</script>
+</body>
+</html>
