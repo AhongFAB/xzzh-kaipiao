@@ -122,7 +122,7 @@ function typeKeys(name){
 }
 
 // 专用进项关键词：含这些词的进项不能用于低可信/兜底匹配（除非销项也含该词）
-const exclusiveKw=['PE管','桥架','直接','三通','阀门','PVC','日丰'];
+const exclusiveKw=['PE管','桥架','直接','三通','阀门','PVC','日丰','管材','管件','弯头','法兰','接头','堵头','四通','变径','异径','补芯','绕管','穿线管','波纹管','KBG','JDG','SC管','镀锌管','焊管','无缝管','螺旋管','铸铁管','PPR','PE盘管','钢塑复合管'];
 function isExclusive(jxName){
     return exclusiveKw.some(k=>jxName.includes(k));
 }
