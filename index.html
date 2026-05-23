@@ -1257,7 +1257,7 @@
             tr.querySelectorAll('td').forEach((td, colIdx) => {
                 const cell = ws.getCell(rowIdx + 2, colIdx + 1);
                 const text = td.textContent.trim();
-                const num = parseFloat(text.replace(/[,￥¥-$]/g, ''));
+                const num = parseFloat(text.replace(/[,¥￥$\s\-]/g, ''));
                 if (!isNaN(num) && text.match(/^[\d,.]/)) {
                     cell.value = num;
                     cell.numFmt = '#,##0.00';
