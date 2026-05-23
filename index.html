@@ -373,26 +373,21 @@ function runAnalysis(){
             const bal=jxBal[jxKey];
             subName=jx.name;
             subSpec=jx.spec||'';
-            subPrice=jx.avgPrice>0?jx.avgPrice:it.price;
             jxTotalAmt=jx.totalAmount;
 
-            // 替代数量=原金额/替代单价，取整
-            subQty=subPrice>0?Math.round(it.amount/subPrice):Math.round(it.qty);
-            if(subQty<1)subQty=1; // 至少1个
+            // 替代金额=原金额，数量取整，单价反算
+            subAmount=it.amount;
+            const avgP=jx.avgPrice>0?jx.avgPrice:it.price;
+            subQty=avgP>0?Math.round(it.amount/avgP):Math.round(it.qty);
+            if(subQty<1)subQty=1;
 
             // 检查进项数量余额
-            if(subQty>bal.qty&&bal.qty>0){
+            if(bal.qty>0&&subQty>bal.qty){
                 subQty=Math.max(1,Math.floor(bal.qty));
             }
 
-            // 替代金额=数量×单价
-            subAmount=subQty*subPrice;
-
-            // 检查进项金额余额
-            if(subAmount>bal.amt){
-                subQty=Math.max(1,Math.floor(bal.amt/subPrice));
-                subAmount=subQty*subPrice;
-            }
+            // 反算单价：金额÷数量
+            subPrice=subQty>0?subAmount/subQty:0;
 
             // 扣减余额
             bal.amt-=subAmount;
@@ -400,9 +395,9 @@ function runAnalysis(){
         }else{
             subName=it.name;
             subSpec=it.spec||'';
-            subPrice=it.price;
             subQty=Math.round(it.qty)||1;
             subAmount=it.amount;
+            subPrice=subQty>0?subAmount/subQty:0;
             if(!matchDetail)matchDetail='无可用进项(兜底)';
         }
 
@@ -426,38 +421,15 @@ function runAnalysis(){
         };
     });
 
-    // ===== 总金额对齐：调整单价使总金额匹配 =====
-    // 先按金额从大到小排序处理
+    // ===== 总金额对齐（理论上每行金额=原金额，已天然一致，这里做校验兜底） =====
     const totalSub=advices.reduce((s,a)=>s+a.subAmount,0);
     let diff=totalOrig-totalSub;
-
     if(Math.abs(diff)>0.01){
-        // 尝试通过增加有余额的行的数量来补差额
-        const sortedIdxs=advices.map((a,i)=>i).sort((a,b)=>advices[b].amount-advices[a].amount);
-        for(const idx of sortedIdxs){
-            if(Math.abs(diff)<0.01)break;
-            const a=advices[idx];
-            const bal=jxBal[a.jxKey];
-            if(bal&&bal.amt>0.01){
-                // 看能否加1个
-                const addQty=1;
-                const addAmt=addQty*a.subPrice;
-                if(addAmt<=bal.amt+0.01&&addAmt<=diff+addAmt*0.5){
-                    a.subQty+=addQty;
-                    a.subAmount=a.subQty*a.subPrice;
-                    bal.amt-=addAmt;
-                    bal.qty-=addQty;
-                    diff-=addAmt;
-                }
-            }
-        }
-        // 如果还有小额差额，微调最后一行的单价使其对齐
-        if(Math.abs(diff)>0.01){
-            const last=advices[advices.length-1];
-            if(last.subQty>0){
-                last.subPrice=Math.round((last.subAmount+diff)/last.subQty*10000)/10000;
-                last.subAmount=last.subQty*last.subPrice;
-            }
+        // 极端情况：微调最后一行单价补齐
+        const last=advices[advices.length-1];
+        if(last.subQty>0){
+            last.subPrice=Math.round((last.subAmount+diff)/last.subQty*10000)/10000;
+            last.subAmount=last.subQty*last.subPrice;
         }
     }
 
