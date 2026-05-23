@@ -258,7 +258,7 @@ function runAnalysis(){
 
     function doMatch(it){
         const mk=it.pureName+'|'+it.spec;
-        // 1. 别名匹配
+        // 1. 别名匹配 → 高可信
         const ak=it.pureName+'|'+it.spec;
         if(aliasMap[ak]){
             const jk=aliasMap[ak];
@@ -268,23 +268,22 @@ function runAnalysis(){
                 return;
             }
         }
-        // 2. 精确匹配（品名+规格）
+        // 2. 精确匹配（品名+规格） → 高可信
         const ek=it.pureName+'|'+it.spec;
         if(jxMap[ek]){
             matchLookup[mk]={jxKey:ek,confidence:'high',matchType:'exact',detail:'精确匹配'};
             high.push({...it,matchType:'exact',confidence:'high',matchedJx:jxMap[ek],jxKey:ek,detail:'精确匹配'});
             return;
         }
-        // 3. 品名相同，规格不同
+        // 3. 品名相同，规格不同 → 中可信
         if(jxByName[it.pureName]){
-            // 找金额最大的规格
             const av=jxByName[it.pureName].specs.sort((a,b)=>b.totalAmount-a.totalAmount)[0];
             const jk=av.name+'|'+av.spec;
             matchLookup[mk]={jxKey:jk,confidence:'medium',matchType:'name_same',detail:'品名相同，进项规格: '+(av.spec||'无')};
             med.push({...it,matchType:'name_same',confidence:'medium',matchedJx:jxMap[jk],jxKey:jk,detail:'品名相同，进项规格: '+(av.spec||'无')});
             return;
         }
-        // 4. 中可信模糊
+        // 4. 品名模糊匹配 → 中可信
         let bm=null,bs=0,bk='',bml='';
         Object.entries(jxMap).forEach(([k,v])=>{
             const f=fz(it.pureName,v.name);
@@ -295,28 +294,43 @@ function runAnalysis(){
             med.push({...it,matchType:'fuzzy',confidence:'medium',matchedJx:bm,jxKey:bk,detail:bml,fs:bs});
             return;
         }
-        // 5. 低可信 - 关键词重叠（同类型优先，专用进项排除）
-        const sk=kw(it.pureName);
+        // 5. 同类型匹配（类型关键词重叠） → 中可信
+        //   例：销项"钉子"含"钉" → 进项"钢排钉"也含"钉" → 同类型，中可信
         const tk=typeKeys(it.pureName);
+        const sk=kw(it.pureName);
+        if(tk.length>0){
+            let bestType=null,bestKey='',bestAmt=0,bestDetail='';
+            Object.entries(jxMap).forEach(([k,v])=>{
+                if(isExclusive(v.name)&&!hasSameExclusive(it.pureName,v.name))return;
+                const jxTk=typeKeys(v.name);
+                const overlap=tk.filter(t=>jxTk.includes(t));
+                if(overlap.length>0&&v.totalAmount>bestAmt){
+                    bestType=v;bestKey=k;bestAmt=v.totalAmount;
+                    bestDetail='同类型: '+overlap.join(',');
+                }
+            });
+            if(bestType){
+                matchLookup[mk]={jxKey:bestKey,confidence:'medium',matchType:'type_match',detail:bestDetail};
+                med.push({...it,matchType:'type_match',confidence:'medium',matchedJx:bestType,jxKey:bestKey,detail:bestDetail});
+                return;
+            }
+        }
+        // 6. 关键词字重叠（品名不完全匹配但有共同词） → 低可信
+        //   这是类型也对不上、品名也对不上、规格也对不上的情况
         Object.entries(jxMap).forEach(([k,v])=>{
-            // 专用进项排除：如果进项含专用词但销项不含该词，跳过
             if(isExclusive(v.name)&&!hasSameExclusive(it.pureName,v.name))return;
             const pk=new Set(kw(v.name));
             const ca=sk.filter(w=>pk.has(w));
             const c2=ca.filter(w=>w.length>=2);
             const c1=ca.filter(w=>w.length===1);
             const sc=(it.category&&v.category&&it.category===v.category);
-            // 同类型加分
-            const jxTk=typeKeys(v.name);
-            const typeMatch=tk.some(t=>jxTk.includes(t));
             let s=0,ml='';
-            if(c2.length>=2){s=typeMatch?50:40;ml='共同词: '+c2.slice(0,3).join(',')+(typeMatch?' [同类]':'')}
-            else if(c2.length>=1){s=typeMatch?40:25;ml='共同词: '+c2.join(',')+(typeMatch?' [同类]':'')}
-            else if(c1.length>=3){s=typeMatch?30:20;ml=`多字重叠(${c1.length}字)`+(typeMatch?' [同类]':'')}
-            else if(c1.length>=2){s=typeMatch?25:15;ml='字重叠: '+c1.slice(0,3).join(',')+(typeMatch?' [同类]':'')}
+            if(c2.length>=2){s=40;ml='共同词: '+c2.slice(0,3).join(',')}
+            else if(c2.length>=1){s=25;ml='共同词: '+c2.join(',')}
+            else if(c1.length>=3){s=20;ml=`多字重叠(${c1.length}字)`}
+            else if(c1.length>=2){s=15;ml='字重叠: '+c1.slice(0,3).join(',')}
             else if(c1.length>=1&&sc){s=12;ml='同分类+字重叠'}
             else if(sc){s=8;ml='仅同分类'}
-            else if(typeMatch){s=18;ml='同类型: '+tk.filter(t=>jxTk.includes(t)).join(',')}
             if(s>bs){bs=s;bm=v;bk=k;bml=ml}
         });
         if(bm&&bs>=8){
@@ -324,7 +338,7 @@ function runAnalysis(){
             low.push({...it,matchType:'low_fuzzy',confidence:'low',matchedJx:bm,jxKey:bk,detail:bml,fs:bs});
             return;
         }
-        // 6. 同分类兜底（排除专用进项）
+        // 7. 同分类兜底 → 低可信
         const cat=it.category||'未分类';
         if(jxByCat[cat]&&jxByCat[cat].length>0){
             const catAvail=jxByCat[cat].filter(jx=>!isExclusive(jx.name)||hasSameExclusive(it.pureName,jx.name));
@@ -336,30 +350,13 @@ function runAnalysis(){
                 return;
             }
         }
-        // 7. 同类型兜底（优先同类型有余额的进项，排除专用）
-        if(tk.length>0){
-            let bestType=null,bestKey='',bestAmt=0;
-            Object.entries(jxMap).forEach(([k,v])=>{
-                if(isExclusive(v.name)&&!hasSameExclusive(it.pureName,v.name))return;
-                const jxTk=typeKeys(v.name);
-                if(tk.some(t=>jxTk.includes(t))&&v.totalAmount>bestAmt){
-                    bestType=v;bestKey=k;bestAmt=v.totalAmount;
-                }
-            });
-            if(bestType){
-                matchLookup[mk]={jxKey:bestKey,confidence:'low',matchType:'type_match',detail:'同类型匹配: '+tk.filter(t=>typeKeys(bestType.name).includes(t)).join(',')};
-                low.push({...it,matchType:'type_match',confidence:'low',matchedJx:bestType,jxKey:bestKey,detail:'同类型匹配: '+tk.filter(t=>typeKeys(bestType.name).includes(t)).join(',')});
-                return;
-            }
-        }
-        // 8. 终极兜底：排除专用进项后的任意有余额进项
+        // 8. 终极兜底 → 低可信
         const nonExclusiveJx=Object.entries(jxMap).filter(([k,v])=>!isExclusive(v.name)||hasSameExclusive(it.pureName,v.name)).sort((a,b)=>b[1].totalAmount-a[1].totalAmount);
         if(nonExclusiveJx.length>0){
             matchLookup[mk]={jxKey:nonExclusiveJx[0][0],confidence:'low',matchType:'fallback',detail:'兜底匹配'};
             low.push({...it,matchType:'fallback',confidence:'low',matchedJx:nonExclusiveJx[0][1],jxKey:nonExclusiveJx[0][0],detail:'兜底匹配'});
             return;
         }
-        // 理论上不会到这里（只要有进项数据）
         matchLookup[mk]={jxKey:null,confidence:'low',matchType:'none',detail:'无进项数据'};
         low.push({...it,matchType:'none',confidence:'low',matchedJx:null,detail:'无进项数据'});
     }
@@ -368,7 +365,7 @@ function runAnalysis(){
 
     // 待确认建议
     const sgs=[];
-    [...med.filter(m=>m.matchType==='fuzzy'),...low.filter(l=>l.matchType==='low_fuzzy'||l.matchType==='category'||l.matchType==='fallback')].forEach(it=>{
+    [...med.filter(m=>m.matchType==='fuzzy'||m.matchType==='type_match'),...low.filter(l=>l.matchType==='low_fuzzy'||l.matchType==='category'||l.matchType==='fallback')].forEach(it=>{
         if(it.matchedJx)sgs.push({item:it,suggestion:it.matchedJx,score:it.fs||0,method:it.detail||''});
     });
 
@@ -550,8 +547,8 @@ function rConfTable(items,c,e){
     <div class="scrollable-table"><table><thead><tr><th>方式</th><th>原品名</th><th>规格</th><th>匹配进项</th><th>进项规格</th><th>销项金额</th><th>进项金额</th><th>说明</th><th>够开?</th></tr></thead>
     <tbody>${items.map(it=>{
         const mr=it.totalAmount/1.185,en=it.matchedJx&&it.matchedJx.totalAmount>=mr;
-        const ml=it.matchType==='exact'?'精确':it.matchType==='alias'?'别名':it.matchType==='name_same'?'品名同':it.matchType==='category'?'同分类':it.matchType==='type_match'?'同类型':it.matchType==='fallback'?'兜底':'模糊';
-        const tc=it.matchType==='exact'||it.matchType==='alias'?'tag-success':it.matchType==='name_same'?'tag-info':'tag-warning';
+        const ml=it.matchType==='exact'?'精确':it.matchType==='alias'?'别名':it.matchType==='name_same'?'品名同':it.matchType==='type_match'?'同类型':it.matchType==='category'?'同分类':it.matchType==='fallback'?'兜底':'模糊';
+        const tc=it.matchType==='exact'||it.matchType==='alias'?'tag-success':it.matchType==='name_same'||it.matchType==='type_match'?'tag-info':'tag-warning';
         return`<tr><td><span class="tag ${tc}">${ml}</span></td><td><strong>${it.pureName}</strong></td><td>${it.spec||'-'}</td>
         <td>${it.matchedJx?it.matchedJx.name:'-'}</td>
         <td>${it.matchedJx?(it.matchedJx.spec||'-'):'-'}</td>
