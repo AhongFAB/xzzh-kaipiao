@@ -348,7 +348,6 @@ function runAnalysis(){
 
         // 如果匹配的进项没余额了，找有余额的替代
         if(!jxKey||!jxBal[jxKey]||jxBal[jxKey].amt<=0.01){
-            // 优先找同分类有余额的
             const cat=it.cat||'未分类';
             let found=false;
             if(jxByCat[cat]){
@@ -359,7 +358,6 @@ function runAnalysis(){
                     }
                 }
             }
-            // 再找任何有余额的
             if(!found){
                 for(const[k2,b] of Object.entries(jxBal)){
                     if(b.amt>0.01){jxKey=k2;confidence='low';matchType='fallback_bal';matchDetail='余额分配匹配';found=true;break;}
@@ -378,18 +376,21 @@ function runAnalysis(){
             subPrice=jx.avgPrice>0?jx.avgPrice:it.price;
             jxTotalAmt=jx.totalAmount;
 
-            // 替代金额=原金额，替代数量=原金额/替代单价
-            subAmount=it.amount;
-            subQty=subPrice>0?(subAmount/subPrice):it.qty;
+            // 替代数量=原金额/替代单价，取整
+            subQty=subPrice>0?Math.round(it.amount/subPrice):Math.round(it.qty);
+            if(subQty<1)subQty=1; // 至少1个
 
-            // 检查进项余额是否够
-            if(subAmount>bal.amt){
-                // 余额不够，用完余额
-                subAmount=bal.amt;
-                subQty=subPrice>0?(subAmount/subPrice):0;
-            }
+            // 检查进项数量余额
             if(subQty>bal.qty&&bal.qty>0){
-                subQty=bal.qty;
+                subQty=Math.max(1,Math.floor(bal.qty));
+            }
+
+            // 替代金额=数量×单价
+            subAmount=subQty*subPrice;
+
+            // 检查进项金额余额
+            if(subAmount>bal.amt){
+                subQty=Math.max(1,Math.floor(bal.amt/subPrice));
                 subAmount=subQty*subPrice;
             }
 
@@ -397,11 +398,10 @@ function runAnalysis(){
             bal.amt-=subAmount;
             bal.qty-=subQty;
         }else{
-            // 无可用进项（理论上不应发生），用自身信息兜底
             subName=it.name;
             subSpec=it.spec||'';
             subPrice=it.price;
-            subQty=it.qty;
+            subQty=Math.round(it.qty)||1;
             subAmount=it.amount;
             if(!matchDetail)matchDetail='无可用进项(兜底)';
         }
@@ -420,36 +420,44 @@ function runAnalysis(){
 
         return{
             origName:it.orig||it.name,pureName:it.name,spec:it.spec,qty:it.qty,price:it.price,amount:it.amount,
-            subName,subSpec,subQty:Math.round(subQty*10000)/10000,subPrice:Math.round(subPrice*10000)/10000,subAmount,
+            subName,subSpec,subQty:Math.round(subQty),subPrice:Math.round(subPrice*10000)/10000,subAmount,
             jxKey,jxTotalAmt,confidence,matchType,matchDetail,
             minReq,status,statusText,gap
         };
     });
 
-    // ===== 总金额对齐：差额分配到有余额的进项 =====
+    // ===== 总金额对齐：调整单价使总金额匹配 =====
+    // 先按金额从大到小排序处理
     const totalSub=advices.reduce((s,a)=>s+a.subAmount,0);
     let diff=totalOrig-totalSub;
 
     if(Math.abs(diff)>0.01){
-        // 按金额从大到小找有余额的进项，分配差额
+        // 尝试通过增加有余额的行的数量来补差额
         const sortedIdxs=advices.map((a,i)=>i).sort((a,b)=>advices[b].amount-advices[a].amount);
         for(const idx of sortedIdxs){
             if(Math.abs(diff)<0.01)break;
             const a=advices[idx];
             const bal=jxBal[a.jxKey];
             if(bal&&bal.amt>0.01){
-                const add=Math.min(diff,bal.amt);
-                a.subAmount+=add;
-                a.subQty=a.subPrice>0?(a.subAmount/a.subPrice):a.subQty;
-                bal.amt-=add;
-                diff-=add;
+                // 看能否加1个
+                const addQty=1;
+                const addAmt=addQty*a.subPrice;
+                if(addAmt<=bal.amt+0.01&&addAmt<=diff+addAmt*0.5){
+                    a.subQty+=addQty;
+                    a.subAmount=a.subQty*a.subPrice;
+                    bal.amt-=addAmt;
+                    bal.qty-=addQty;
+                    diff-=addAmt;
+                }
             }
         }
-        // 如果还有差额（进项总额不够），在最后一行补齐
+        // 如果还有小额差额，微调最后一行的单价使其对齐
         if(Math.abs(diff)>0.01){
             const last=advices[advices.length-1];
-            last.subAmount+=diff;
-            last.subQty=last.subPrice>0?(last.subAmount/last.subPrice):last.subQty;
+            if(last.subQty>0){
+                last.subPrice=Math.round((last.subAmount+diff)/last.subQty*10000)/10000;
+                last.subAmount=last.subQty*last.subPrice;
+            }
         }
     }
 
@@ -558,7 +566,7 @@ function rAdvice(){
         return`<tr class="${rc}">
         <td><span class="tag tag-${a.status==='success'?'success':a.status==='danger'?'danger':'warning'}">${a.statusText}</span></td>
         <td><strong>${a.pureName}</strong></td><td>${a.spec||'-'}</td><td>${a.qty}</td><td class="money">${a.price?a.price.toFixed(2):'-'}</td><td class="money">${fmt(a.amount)}</td>
-        <td><strong>${a.subName}</strong></td><td>${a.subSpec||'-'}</td><td>${a.subQty.toFixed(2)}</td><td class="money">${a.subPrice.toFixed(2)}</td><td class="money">${fmt(a.subAmount)}</td>
+        <td><strong>${a.subName}</strong></td><td>${a.subSpec||'-'}</td><td>${a.subQty}</td><td class="money">${a.subPrice.toFixed(2)}</td><td class="money">${fmt(a.subAmount)}</td>
         <td>${ct}</td><td style="font-size:12px;color:#64748b">${a.matchDetail||'-'}</td></tr>`}).join('')}</tbody></table></div></div>`;
 }
 
