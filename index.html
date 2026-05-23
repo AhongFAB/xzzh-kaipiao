@@ -72,7 +72,7 @@
     <header><h1>📋 开票建议匹配工具</h1><p>智能匹配销项进项品名，自动计算进项缺口，生成开票建议</p></header>
     <div class="upload-section">
         <div class="upload-card" id="kpCard"><h3>📤 待开票清单</h3><div class="upload-zone" id="kpZone"><div class="icon">📄</div><div>点击或拖拽上传</div><div class="hint">支持 .xlsx / .xls / .csv</div></div><input type="file" id="kpInput" accept=".xlsx,.xls,.csv" style="display:none"><div class="file-info" id="kpInfo"><div class="name" id="kpName"></div><div class="meta" id="kpMeta"></div></div></div>
-        <div class="upload-card" id="jxCard"><h3>📥 进项发票明细</h3><div class="upload-zone" id="jxZone"><div class="icon">📄</div><div>点击或拖拽上传</div><div class="hint">支持 .xlsx / .xls / .csv</div></div><input type="file" id="jxInput" accept=".xlsx,.xls,.csv" style="display:none"><div class="file-info" id="jxInfo"><div class="name" id="jxName"></div><div class="meta" id="jxMeta"></div></div></div>
+        <div class="upload-card" id="jxCard"><h3>📥 进项明细</h3><div class="upload-zone" id="jxZone"><div class="icon">📄</div><div>点击或拖拽上传</div><div class="hint">可开进项表 或 完整进项明细</div></div><input type="file" id="jxInput" accept=".xlsx,.xls,.csv" style="display:none"><div class="file-info" id="jxInfo"><div class="name" id="jxName"></div><div class="meta" id="jxMeta"></div></div></div>
     </div>
     <div class="action-bar"><button class="btn btn-primary" id="analyzeBtn" onclick="runAnalysis()" disabled>🔍 开始分析</button><button class="btn btn-secondary" onclick="clearAll()">🗑️ 清空数据</button></div>
     <div id="resultsSection" style="display:none">
@@ -155,35 +155,67 @@ function switchTab(i){curTab=i;document.querySelectorAll('.tab-btn').forEach((b,
 function runAnalysis(){
     if(!kpData.length||!jxData.length){toast('请先上传两个文件','error');return}
 
+    // ===== 检测进项数据格式 =====
+    const sampleRow=jxData[0]||{};
+    const isSimple=!!(sampleRow['产品名']&&sampleRow['进项金额']&&!sampleRow['货物或应税劳务名称']);
+
     // ===== 费用票关键词（更全面） =====
     const expKw=['客运','机票','汽油','柴油','餐饮','住宿','运输','物流','保险','维修','广告','代理','经纪','电信','娱乐','生活服务','旅游','租赁','会展','信息系统','代理记账','预付卡','成品油','加油','服务费','票价','轿车','药品','代订','充值','油费','油款','过路','停车','拖车','年检','车险','审车','打车','网约','差旅','培训','咨询','审计','评估','检测','检验','认证','公证','诉讼','仲裁','法律','装修','物业','快递','邮政','通信','宽带','网络费','水费','电费','燃气','劳务','外包','设计费','勘察','监理','测绘'];
 
     // ===== 过滤有效进项 =====
-    const validJx=jxData.filter(row=>{
-        const st=String(row['发票状态']||'');const ip=String(row['是否正数发票']||'');
-        if(st.includes('红冲')&&st.includes('全额'))return false;
-        if(ip==='否')return false;
-        const nm=pureName(row['货物或应税劳务名称']||'');
-        if(expKw.some(k=>nm.includes(k)))return false;
-        return true;
-    });
+    let validJx;
+    if(isSimple){
+        // 新格式：产品名/规格型号/进项数量/进项金额/核查结果（已经是处理好的数据）
+        validJx=jxData.filter(row=>{
+            const nm=String(row['产品名']||'').trim();
+            if(!nm)return false;
+            if(expKw.some(k=>nm.includes(k)))return false;
+            return true;
+        });
+    }else{
+        // 旧格式：27列完整进项明细
+        validJx=jxData.filter(row=>{
+            const st=String(row['发票状态']||'');const ip=String(row['是否正数发票']||'');
+            if(st.includes('红冲')&&st.includes('全额'))return false;
+            if(ip==='否')return false;
+            const nm=pureName(row['货物或应税劳务名称']||'');
+            if(expKw.some(k=>nm.includes(k)))return false;
+            return true;
+        });
+    }
 
     // ===== 汇总进项 by pureName|spec =====
     const jxMap={},jxByName={},jxByCat={};
-    validJx.forEach(row=>{
-        const rn=String(row['货物或应税劳务名称']||'');
-        const pn=pureName(rn),cat=category(rn),sp=String(row['规格型号']||'').trim();
-        const amt=parseFloat(row['金额'])||0,qty=parseFloat(row['数量'])||0,prc=parseFloat(row['单价'])||0;
-        const key=pn+'|'+sp;
-        if(!jxMap[key])jxMap[key]={name:pn,category:cat,spec:sp,totalAmount:0,totalQty:0,totalPrc:0,products:[],avgPrice:0};
-        jxMap[key].totalAmount+=amt;jxMap[key].totalQty+=qty;jxMap[key].totalPrc+=prc;jxMap[key].products.push(row);
-        if(!jxByName[pn])jxByName[pn]={name:pn,category:cat,totalAmount:0,specs:[]};
-        jxByName[pn].totalAmount+=amt;
-        if(!jxByName[pn].specs.find(s=>s.name===pn&&s.spec===sp))jxByName[pn].specs.push(jxMap[key]);
-        const c=cat||'未分类';
-        if(!jxByCat[c])jxByCat[c]=[];
-        if(!jxByCat[c].find(x=>x===jxMap[key]))jxByCat[c].push(jxMap[key]);
-    });
+    if(isSimple){
+        validJx.forEach(row=>{
+            const pn=String(row['产品名']||'').trim();
+            const cat=''; // 新格式无分类
+            const sp=String(row['规格型号']||'').trim();
+            const amt=parseFloat(row['进项金额'])||0;
+            const qty=parseFloat(row['进项数量'])||0;
+            const key=pn+'|'+sp;
+            if(!jxMap[key])jxMap[key]={name:pn,category:cat,spec:sp,totalAmount:0,totalQty:0,totalPrc:0,products:[],avgPrice:0};
+            jxMap[key].totalAmount+=amt;jxMap[key].totalQty+=qty;jxMap[key].products.push(row);
+            if(!jxByName[pn])jxByName[pn]={name:pn,category:cat,totalAmount:0,specs:[]};
+            jxByName[pn].totalAmount+=amt;
+            if(!jxByName[pn].specs.find(s=>s.name===pn&&s.spec===sp))jxByName[pn].specs.push(jxMap[key]);
+        });
+    }else{
+        validJx.forEach(row=>{
+            const rn=String(row['货物或应税劳务名称']||'');
+            const pn=pureName(rn),cat=category(rn),sp=String(row['规格型号']||'').trim();
+            const amt=parseFloat(row['金额'])||0,qty=parseFloat(row['数量'])||0,prc=parseFloat(row['单价'])||0;
+            const key=pn+'|'+sp;
+            if(!jxMap[key])jxMap[key]={name:pn,category:cat,spec:sp,totalAmount:0,totalQty:0,totalPrc:0,products:[],avgPrice:0};
+            jxMap[key].totalAmount+=amt;jxMap[key].totalQty+=qty;jxMap[key].totalPrc+=prc;jxMap[key].products.push(row);
+            if(!jxByName[pn])jxByName[pn]={name:pn,category:cat,totalAmount:0,specs:[]};
+            jxByName[pn].totalAmount+=amt;
+            if(!jxByName[pn].specs.find(s=>s.name===pn&&s.spec===sp))jxByName[pn].specs.push(jxMap[key]);
+            const c=cat||'未分类';
+            if(!jxByCat[c])jxByCat[c]=[];
+            if(!jxByCat[c].find(x=>x===jxMap[key]))jxByCat[c].push(jxMap[key]);
+        });
+    }
     Object.values(jxMap).forEach(j=>{j.avgPrice=j.totalQty>0?j.totalAmount/j.totalQty:(j.totalPrc>0?j.totalPrc:0)});
 
     // ===== 开票清单逐行 =====
