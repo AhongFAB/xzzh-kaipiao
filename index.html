@@ -99,7 +99,7 @@ const toast=(m,t='info')=>{const e=document.createElement('div');e.className='to
 const pureName=n=>{if(!n)return'';const s=String(n).replace(/\n/g,'').trim();const m=s.match(/^\*[^*]+\*([\s\S]+)$/);return m?m[1].trim():s};
 const category=n=>{if(!n)return'';const s=String(n).replace(/\n/g,'').trim();const m=s.match(/^\*([^*]+)\*/);return m?m[1].trim():''};
 
-// 激进关键词：中文拆单字+双字，英文整体大写，数字整体
+// 激进关键词提取
 function kw(name){
     const c=name.replace(/[\s（）()\[\]【】°Φφ#*·\-\/\\]/g,'');
     const ts=c.match(/[\u4e00-\u9fff]+|[A-Za-z]+|[0-9]+/g)||[];
@@ -113,6 +113,22 @@ function kw(name){
         else if(/^[0-9]+$/.test(t))r.push(t);
     }
     return[...new Set(r)];
+}
+
+// 模糊匹配打分
+function fz(sn,pn){
+    const cl=s=>s.replace(/[\s（）()\[\]【】]/g,'').replace(/（[^）]*）/g,'').replace(/\([^)]*\)/g,'').replace(/【[^】]*】/g,'');
+    const s=cl(sn),p=cl(pn);
+    if(s===p)return{score:100,m:'完全相同'};
+    if(s.length>=2&&p.length>=2){if(p.includes(s))return{score:75,m:'进项包含销项品名'};if(s.includes(p))return{score:70,m:'销项包含进项品名'}}
+    const sw=['热镀锌','冷镀锌','镀锌','不锈钢','国标','加厚','加长','重型','轻型','迷你','高档','防锈'];
+    let ss=s,pp=p;sw.forEach(w=>{ss=ss.replace(w,'');pp=pp.replace(w,'')});
+    if(ss&&pp&&ss===pp)return{score:65,m:'去修饰词后相同'};
+    if(ss.length>=2&&pp.length>=2&&(pp.includes(ss)||ss.includes(pp)))return{score:58,m:'去修饰词后包含'};
+    const sW=(s.match(/[\u4e00-\u9fffA-Za-z0-9°Φφ]+/g)||[]).filter(w=>w.length>=2);
+    const pW=(p.match(/[\u4e00-\u9fffA-Za-z0-9°Φφ]+/g)||[]).filter(w=>w.length>=2);
+    if(sW.length&&pW.length){const cm=sW.filter(w=>pW.includes(w));const ov=cm.length/Math.max(sW.length,pW.length);if(ov>=.6)return{score:55,m:`关键词重叠${(ov*100|0)}%`};if(ov>=.4)return{score:45,m:`关键词重叠${(ov*100|0)}%`}}
+    return null;
 }
 
 function setupUpload(){
@@ -139,10 +155,10 @@ function switchTab(i){curTab=i;document.querySelectorAll('.tab-btn').forEach((b,
 function runAnalysis(){
     if(!kpData.length||!jxData.length){toast('请先上传两个文件','error');return}
 
-    // 费用票关键词
-    const expKw=['客运','机票','汽油','柴油','餐饮','住宿','运输','物流','保险','维修','广告','代理','经纪','电信','娱乐','生活服务','旅游','租赁','会展','信息系统','代理记账','预付卡','成品油','加油','服务费','票价','轿车','药品','代订','充值','油费','油款','过路','停车','拖车','年检','车险','审车','打车','网约','差旅','培训','咨询','审计','评估','检测','检验','认证','公证','诉讼','仲裁','法律'];
+    // ===== 费用票关键词（更全面） =====
+    const expKw=['客运','机票','汽油','柴油','餐饮','住宿','运输','物流','保险','维修','广告','代理','经纪','电信','娱乐','生活服务','旅游','租赁','会展','信息系统','代理记账','预付卡','成品油','加油','服务费','票价','轿车','药品','代订','充值','油费','油款','过路','停车','拖车','年检','车险','审车','打车','网约','差旅','培训','咨询','审计','评估','检测','检验','认证','公证','诉讼','仲裁','法律','装修','物业','快递','邮政','通信','宽带','网络费','水费','电费','燃气','劳务','外包','设计费','勘察','监理','测绘'];
 
-    // 过滤有效进项
+    // ===== 过滤有效进项 =====
     const validJx=jxData.filter(row=>{
         const st=String(row['发票状态']||'');const ip=String(row['是否正数发票']||'');
         if(st.includes('红冲')&&st.includes('全额'))return false;
@@ -152,24 +168,25 @@ function runAnalysis(){
         return true;
     });
 
-    // 汇总进项 by pureName|spec
+    // ===== 汇总进项 by pureName|spec =====
     const jxMap={},jxByName={},jxByCat={};
     validJx.forEach(row=>{
         const rn=String(row['货物或应税劳务名称']||'');
         const pn=pureName(rn),cat=category(rn),sp=String(row['规格型号']||'').trim();
         const amt=parseFloat(row['金额'])||0,qty=parseFloat(row['数量'])||0,prc=parseFloat(row['单价'])||0;
         const key=pn+'|'+sp;
-        if(!jxMap[key])jxMap[key]={name:pn,category:cat,spec:sp,totalAmount:0,totalQty:0,avgPrice:0,products:[],_ps:0};
-        jxMap[key].totalAmount+=amt;jxMap[key].totalQty+=qty;jxMap[key]._ps+=prc;jxMap[key].products.push(row);
+        if(!jxMap[key])jxMap[key]={name:pn,category:cat,spec:sp,totalAmount:0,totalQty:0,totalPrc:0,products:[],avgPrice:0};
+        jxMap[key].totalAmount+=amt;jxMap[key].totalQty+=qty;jxMap[key].totalPrc+=prc;jxMap[key].products.push(row);
         if(!jxByName[pn])jxByName[pn]={name:pn,category:cat,totalAmount:0,specs:[]};
-        jxByName[pn].totalAmount+=amt;jxByName[pn].specs.push(jxMap[key]);
+        jxByName[pn].totalAmount+=amt;
+        if(!jxByName[pn].specs.find(s=>s.name===pn&&s.spec===sp))jxByName[pn].specs.push(jxMap[key]);
         const c=cat||'未分类';
         if(!jxByCat[c])jxByCat[c]=[];
         if(!jxByCat[c].find(x=>x===jxMap[key]))jxByCat[c].push(jxMap[key]);
     });
-    Object.values(jxMap).forEach(j=>{j.avgPrice=j.totalQty>0?j.totalAmount/j.totalQty:0});
+    Object.values(jxMap).forEach(j=>{j.avgPrice=j.totalQty>0?j.totalAmount/j.totalQty:(j.totalPrc>0?j.totalPrc:0)});
 
-    // 开票清单逐行
+    // ===== 开票清单逐行 =====
     const kpItems=kpData.map(row=>({
         orig:row['产品名']||row['货物或应税劳务名称']||'',
         name:pureName(row['产品名']||row['货物或应税劳务名称']||''),
@@ -180,7 +197,7 @@ function runAnalysis(){
         amount:parseFloat(row['金额'])||0
     }));
 
-    // 汇总开票 by name|spec
+    // 汇总开票 by name|spec（用于匹配，不互斥）
     const kpByProd={};
     kpItems.forEach(it=>{
         const key=it.name+'|'+it.spec;
@@ -188,72 +205,57 @@ function runAnalysis(){
         kpByProd[key].totalAmount+=it.amount;kpByProd[key].count++;kpByProd[key].items.push(it);
     });
 
-    // ===== 三级匹配 =====
+    // ===== 三级匹配（允许多个开票产品匹配同一进项） =====
     const high=[],med=[],low=[];
-    const used=new Set();
-    const matched=pn=>[...high,...med,...low].some(m=>m.pureName===pn);
+    const matchLookup={}; // kpName|spec -> {jxKey, confidence, matchType, detail, fs}
 
-    // 1. 别名
-    Object.entries(aliasMap).forEach(([ak,jk])=>{
-        const[an,as]=ak.split('|'),[jn,js]=jk.split('|');
-        Object.values(kpByProd).forEach(it=>{
-            if(it.pureName===an&&it.spec===as&&!matched(it.pureName)){
-                const mk=jn+'|'+js;
-                if(jxMap[mk]&&!used.has(mk)){high.push({...it,matchType:'alias',confidence:'high',matchedJx:jxMap[mk],jxKey:mk});used.add(mk)}
+    function doMatch(it){
+        const mk=it.pureName+'|'+it.spec;
+        // 1. 别名匹配
+        const ak=it.pureName+'|'+it.spec;
+        if(aliasMap[ak]){
+            const jk=aliasMap[ak];
+            if(jxMap[jk]){
+                matchLookup[mk]={jxKey:jk,confidence:'high',matchType:'alias',detail:'别名匹配'};
+                high.push({...it,matchType:'alias',confidence:'high',matchedJx:jxMap[jk],jxKey:jk,detail:'别名匹配'});
+                return;
             }
-        });
-    });
-
-    // 2. 精确匹配
-    Object.values(kpByProd).forEach(it=>{
-        if(matched(it.pureName))return;
-        const ek=it.pureName+'|'+it.spec;
-        if(jxMap[ek]&&!used.has(ek)){high.push({...it,matchType:'exact',confidence:'high',matchedJx:jxMap[ek],jxKey:ek});used.add(ek)}
-    });
-
-    // 3. 品名同规格不同
-    Object.values(kpByProd).forEach(it=>{
-        if(matched(it.pureName))return;
-        if(jxByName[it.pureName]){
-            const av=jxByName[it.pureName].specs.find(s=>!used.has(s.name+'|'+s.spec));
-            if(av){const mk=av.name+'|'+av.spec;med.push({...it,matchType:'name_same',confidence:'medium',matchedJx:jxMap[mk],jxKey:mk,detail:'品名相同，进项规格: '+(av.spec||'无')});used.add(mk)}
         }
-    });
-
-    // 4. 中可信模糊
-    function fz(sn,pn){
-        const cl=s=>s.replace(/[\s（）()\[\]【】]/g,'').replace(/（[^）]*）/g,'').replace(/\([^)]*\)/g,'').replace(/【[^】]*】/g,'');
-        const s=cl(sn),p=cl(pn);
-        if(s===p)return{score:100,m:'完全相同'};
-        if(s.length>=2&&p.length>=2){if(p.includes(s))return{score:75,m:'进项包含销项品名'};if(s.includes(p))return{score:70,m:'销项包含进项品名'}}
-        const sw=['热镀锌','冷镀锌','镀锌','不锈钢','国标','加厚','加长','重型','轻型','迷你','高档','防锈'];
-        let ss=s,pp=p;sw.forEach(w=>{ss=ss.replace(w,'');pp=pp.replace(w,'')});
-        if(ss&&pp&&ss===pp)return{score:65,m:'去修饰词后相同'};
-        if(ss.length>=2&&pp.length>=2&&(pp.includes(ss)||ss.includes(pp)))return{score:58,m:'去修饰词后包含'};
-        const sW=(s.match(/[\u4e00-\u9fffA-Za-z0-9°Φφ]+/g)||[]).filter(w=>w.length>=2);
-        const pW=(p.match(/[\u4e00-\u9fffA-Za-z0-9°Φφ]+/g)||[]).filter(w=>w.length>=2);
-        if(sW.length&&pW.length){const cm=sW.filter(w=>pW.includes(w));const ov=cm.length/Math.max(sW.length,pW.length);if(ov>=.6)return{score:55,m:`关键词重叠${(ov*100|0)}%`};if(ov>=.4)return{score:45,m:`关键词重叠${(ov*100|0)}%`}}
-        return null;
-    }
-    Object.values(kpByProd).forEach(it=>{
-        if(matched(it.pureName))return;
+        // 2. 精确匹配（品名+规格）
+        const ek=it.pureName+'|'+it.spec;
+        if(jxMap[ek]){
+            matchLookup[mk]={jxKey:ek,confidence:'high',matchType:'exact',detail:'精确匹配'};
+            high.push({...it,matchType:'exact',confidence:'high',matchedJx:jxMap[ek],jxKey:ek,detail:'精确匹配'});
+            return;
+        }
+        // 3. 品名相同，规格不同
+        if(jxByName[it.pureName]){
+            // 找金额最大的规格
+            const av=jxByName[it.pureName].specs.sort((a,b)=>b.totalAmount-a.totalAmount)[0];
+            const jk=av.name+'|'+av.spec;
+            matchLookup[mk]={jxKey:jk,confidence:'medium',matchType:'name_same',detail:'品名相同，进项规格: '+(av.spec||'无')};
+            med.push({...it,matchType:'name_same',confidence:'medium',matchedJx:jxMap[jk],jxKey:jk,detail:'品名相同，进项规格: '+(av.spec||'无')});
+            return;
+        }
+        // 4. 中可信模糊
         let bm=null,bs=0,bk='',bml='';
-        Object.entries(jxMap).forEach(([k,v])=>{if(used.has(k))return;const f=fz(it.pureName,v.name);if(f&&f.score>bs){bs=f.score;bm=v;bk=k;bml=f.m}});
-        if(bm&&bs>=45){med.push({...it,matchType:'fuzzy',confidence:'medium',matchedJx:bm,jxKey:bk,detail:bml,fs:bs});used.add(bk)}
-    });
-
-    // 5. 低可信 - 超模糊
-    Object.values(kpByProd).forEach(it=>{
-        if(matched(it.pureName))return;
-        let bm=null,bs=0,bk='',bml='';
+        Object.entries(jxMap).forEach(([k,v])=>{
+            const f=fz(it.pureName,v.name);
+            if(f&&f.score>bs){bs=f.score;bm=v;bk=k;bml=f.m}
+        });
+        if(bm&&bs>=45){
+            matchLookup[mk]={jxKey:bk,confidence:'medium',matchType:'fuzzy',detail:bml,fs:bs};
+            med.push({...it,matchType:'fuzzy',confidence:'medium',matchedJx:bm,jxKey:bk,detail:bml,fs:bs});
+            return;
+        }
+        // 5. 低可信 - 关键词重叠
         const sk=kw(it.pureName);
         Object.entries(jxMap).forEach(([k,v])=>{
-            if(used.has(k))return;
             const pk=new Set(kw(v.name));
             const ca=sk.filter(w=>pk.has(w));
             const c2=ca.filter(w=>w.length>=2);
             const c1=ca.filter(w=>w.length===1);
-            const sc=(it.cat&&v.category&&it.cat===v.category);
+            const sc=(it.category&&v.category&&it.category===v.category);
             let s=0,ml='';
             if(c2.length>=2){s=40;ml='共同词: '+c2.slice(0,3).join(',')}
             else if(c2.length>=1){s=sc?30:25;ml='共同词: '+c2.join(',')}
@@ -263,72 +265,178 @@ function runAnalysis(){
             else if(sc){s=8;ml='仅同分类'}
             if(s>bs){bs=s;bm=v;bk=k;bml=ml}
         });
-        if(bm){low.push({...it,matchType:'low_fuzzy',confidence:'low',matchedJx:bm,jxKey:bk,detail:bml,fs:bs});used.add(bk)}
-        else{low.push({...it,matchType:'none',confidence:'low',matchedJx:null,detail:'无匹配进项'})}
-    });
+        if(bm&&bs>=8){
+            matchLookup[mk]={jxKey:bk,confidence:'low',matchType:'low_fuzzy',detail:bml,fs:bs};
+            low.push({...it,matchType:'low_fuzzy',confidence:'low',matchedJx:bm,jxKey:bk,detail:bml,fs:bs});
+            return;
+        }
+        // 6. 同分类兜底
+        const cat=it.category||'未分类';
+        if(jxByCat[cat]&&jxByCat[cat].length>0){
+            const best=jxByCat[cat].sort((a,b)=>b.totalAmount-a.totalAmount)[0];
+            const jk=best.name+'|'+best.spec;
+            matchLookup[mk]={jxKey:jk,confidence:'low',matchType:'category',detail:'同分类匹配'};
+            low.push({...it,matchType:'category',confidence:'low',matchedJx:jxMap[jk],jxKey:jk,detail:'同分类匹配'});
+            return;
+        }
+        // 7. 终极兜底：任何有余额的进项
+        const anyJx=Object.entries(jxMap).sort((a,b)=>b[1].totalAmount-a[1].totalAmount)[0];
+        if(anyJx){
+            matchLookup[mk]={jxKey:anyJx[0],confidence:'low',matchType:'fallback',detail:'兜底匹配'};
+            low.push({...it,matchType:'fallback',confidence:'low',matchedJx:anyJx[1],jxKey:anyJx[0],detail:'兜底匹配'});
+            return;
+        }
+        // 理论上不会到这里（只要有进项数据）
+        matchLookup[mk]={jxKey:null,confidence:'low',matchType:'none',detail:'无进项数据'};
+        low.push({...it,matchType:'none',confidence:'low',matchedJx:null,detail:'无进项数据'});
+    }
+
+    Object.values(kpByProd).forEach(doMatch);
 
     // 待确认建议
     const sgs=[];
-    [...med.filter(m=>m.matchType==='fuzzy'),...low.filter(l=>l.matchType==='low_fuzzy')].forEach(it=>{
-        sgs.push({item:it,suggestion:it.matchedJx,score:it.fs||0,method:it.detail||''});
+    [...med.filter(m=>m.matchType==='fuzzy'),...low.filter(l=>l.matchType==='low_fuzzy'||l.matchType==='category'||l.matchType==='fallback')].forEach(it=>{
+        if(it.matchedJx)sgs.push({item:it,suggestion:it.matchedJx,score:it.fs||0,method:it.detail||''});
     });
 
-    // 剩余进项
-    const avail=[];Object.entries(jxMap).forEach(([k,v])=>{if(!used.has(k))avail.push(v)});
+    // ===== 开票建议：逐行对应，每行替代完整，总金额=开票清单总金额 =====
+    const totalOrig=kpItems.reduce((s,i)=>s+i.amount,0);
 
-    // ===== 开票建议：逐行对应，金额完全一致 =====
-    const matchMap={};
-    [...high,...med,...low].forEach(m=>{matchMap[m.pureName+'|'+m.spec]=m});
+    // 进项余额追踪
+    const jxBal={};
+    Object.entries(jxMap).forEach(([k,v])=>{jxBal[k]={amt:v.totalAmount,qty:v.totalQty}});
 
     const advices=kpItems.map(it=>{
         const mk=it.name+'|'+it.spec;
-        const m=matchMap[mk];
-        const minReq=it.amount/1.185;
-        // 替代品信息：用匹配到的进项品名和规格，但金额=原开票清单金额
-        let subName='',subSpec='',subQty=0,subPrice=0,confidence='none',matchType='none',matchDetail='';
-        let jxTotalAmt=0; // 实际进项总额（用于判断够不够开）
+        let match=matchLookup[mk];
+        let jxKey=match?match.jxKey:null;
+        let confidence=match?match.confidence:'low';
+        let matchType=match?match.matchType:'none';
+        let matchDetail=match?match.detail:'';
 
-        if(m&&m.matchedJx){
-            subName=m.matchedJx.name;
-            subSpec=m.matchedJx.spec;
-            subQty=it.qty; // 替代数量=原数量
-            subPrice=it.price; // 替代单价=原单价
-            confidence=m.confidence;
-            matchType=m.matchType;
-            matchDetail=m.detail||'';
-            jxTotalAmt=m.matchedJx.totalAmount;
+        // 如果匹配的进项没余额了，找有余额的替代
+        if(!jxKey||!jxBal[jxKey]||jxBal[jxKey].amt<=0.01){
+            // 优先找同分类有余额的
+            const cat=it.cat||'未分类';
+            let found=false;
+            if(jxByCat[cat]){
+                for(const jx of jxByCat[cat].sort((a,b)=>b.totalAmount-a.totalAmount)){
+                    const k2=jx.name+'|'+jx.spec;
+                    if(jxBal[k2]&&jxBal[k2].amt>0.01){
+                        jxKey=k2;confidence='low';matchType='category_bal';matchDetail='同分类余额匹配';found=true;break;
+                    }
+                }
+            }
+            // 再找任何有余额的
+            if(!found){
+                for(const[k2,b] of Object.entries(jxBal)){
+                    if(b.amt>0.01){jxKey=k2;confidence='low';matchType='fallback_bal';matchDetail='余额分配匹配';found=true;break;}
+                }
+            }
+        }
+
+        let subName='',subSpec='',subPrice=0,subQty=0,subAmount=0;
+        let jxTotalAmt=0;
+
+        if(jxKey&&jxMap[jxKey]&&jxBal[jxKey]&&jxBal[jxKey].amt>0.01){
+            const jx=jxMap[jxKey];
+            const bal=jxBal[jxKey];
+            subName=jx.name;
+            subSpec=jx.spec||'';
+            subPrice=jx.avgPrice>0?jx.avgPrice:it.price;
+            jxTotalAmt=jx.totalAmount;
+
+            // 替代金额=原金额，替代数量=原金额/替代单价
+            subAmount=it.amount;
+            subQty=subPrice>0?(subAmount/subPrice):it.qty;
+
+            // 检查进项余额是否够
+            if(subAmount>bal.amt){
+                // 余额不够，用完余额
+                subAmount=bal.amt;
+                subQty=subPrice>0?(subAmount/subPrice):0;
+            }
+            if(subQty>bal.qty&&bal.qty>0){
+                subQty=bal.qty;
+                subAmount=subQty*subPrice;
+            }
+
+            // 扣减余额
+            bal.amt-=subAmount;
+            bal.qty-=subQty;
+        }else{
+            // 无可用进项（理论上不应发生），用自身信息兜底
+            subName=it.name;
+            subSpec=it.spec||'';
+            subPrice=it.price;
+            subQty=it.qty;
+            subAmount=it.amount;
+            if(!matchDetail)matchDetail='无可用进项(兜底)';
         }
 
         // 状态判断
+        const minReq=it.amount/1.185;
         let status,statusText,gap=0;
-        if(!subName){
-            status='danger';statusText='❌ 无进项';gap=minReq;
-        }else if(jxTotalAmt>=minReq){
+        if(subAmount>=it.amount-0.01){
             status=confidence==='high'?'success':confidence==='medium'?'success':'warning';
             statusText=confidence==='high'?'✅ 可开':confidence==='medium'?'⚠️ 可开(中可信)':'⚠️ 可开(低可信)';
         }else{
-            gap=minReq-jxTotalAmt;
-            status=confidence==='low'?'danger':'warning';
-            statusText=gap>minReq*.5?'❌ 进项严重不足':'⚠️ 进项不足';
+            gap=it.amount-subAmount;
+            status='warning';
+            statusText='⚠️ 进项部分覆盖';
         }
 
         return{
             origName:it.orig||it.name,pureName:it.name,spec:it.spec,qty:it.qty,price:it.price,amount:it.amount,
-            subName,subSpec,subQty,subPrice,subAmount:it.amount, // 替代金额=原金额
-            jxTotalAmt,confidence,matchType,matchDetail,
+            subName,subSpec,subQty:Math.round(subQty*10000)/10000,subPrice:Math.round(subPrice*10000)/10000,subAmount,
+            jxKey,jxTotalAmt,confidence,matchType,matchDetail,
             minReq,status,statusText,gap
         };
     });
 
+    // ===== 总金额对齐：差额分配到有余额的进项 =====
+    const totalSub=advices.reduce((s,a)=>s+a.subAmount,0);
+    let diff=totalOrig-totalSub;
+
+    if(Math.abs(diff)>0.01){
+        // 按金额从大到小找有余额的进项，分配差额
+        const sortedIdxs=advices.map((a,i)=>i).sort((a,b)=>advices[b].amount-advices[a].amount);
+        for(const idx of sortedIdxs){
+            if(Math.abs(diff)<0.01)break;
+            const a=advices[idx];
+            const bal=jxBal[a.jxKey];
+            if(bal&&bal.amt>0.01){
+                const add=Math.min(diff,bal.amt);
+                a.subAmount+=add;
+                a.subQty=a.subPrice>0?(a.subAmount/a.subPrice):a.subQty;
+                bal.amt-=add;
+                diff-=add;
+            }
+        }
+        // 如果还有差额（进项总额不够），在最后一行补齐
+        if(Math.abs(diff)>0.01){
+            const last=advices[advices.length-1];
+            last.subAmount+=diff;
+            last.subQty=last.subPrice>0?(last.subAmount/last.subPrice):last.subQty;
+        }
+    }
+
+    // 按状态排序
     const so={danger:0,warning:1,success:2};
     advices.sort((a,b)=>so[a.status]-so[b.status]);
 
     const ha=high.reduce((s,i)=>s+i.totalAmount,0);
     const ma=med.reduce((s,i)=>s+i.totalAmount,0);
     const la=low.reduce((s,i)=>s+i.totalAmount,0);
-    const ta=kpItems.reduce((s,i)=>s+i.amount,0);
 
-    result={totalItems:kpItems.length,totalAmount:ta,hc:high.length,ha,mc:med.length,ma,lc:low.length,la,high,med,low,sgs,avail,advices};
+    // 剩余进项
+    const avail=[];Object.entries(jxMap).forEach(([k,v])=>{
+        const bal=jxBal[k]||{amt:0};
+        if(bal.amt>0.01)avail.push({...v,remainAmt:bal.amt,remainQty:bal.qty});
+    });
+
+    result={totalItems:kpItems.length,totalAmount:totalOrig,hc:high.length,ha,mc:med.length,ma,lc:low.length,la,high,med,low,sgs,avail,advices,
+        totalSub:advices.reduce((s,a)=>s+a.subAmount,0)};
 
     document.getElementById('highBadge').textContent=high.length;
     document.getElementById('medBadge').textContent=med.length;
@@ -344,7 +452,7 @@ function runAnalysis(){
     document.getElementById('tab7').innerHTML=rAdvice();
     document.getElementById('resultsSection').style.display='block';
     curTab=0;switchTab(0);
-    toast(`分析完成！高${high.length} 中${med.length} 低${low.length}`,'success');
+    toast(`分析完成！高${high.length} 中${med.length} 低${low.length}，全部已匹配`,'success');
 }
 
 function rOverview(){
@@ -360,7 +468,7 @@ function rOverview(){
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px"><span style="width:80px;color:#10b981;font-weight:600">🟢 高可信</span><div style="flex:1;height:24px;background:#e2e8f0;border-radius:12px;overflow:hidden"><div style="height:100%;width:${p(r.ha)}%;background:#10b981;border-radius:12px"></div></div><span style="min-width:80px;text-align:right;font-weight:600">¥${fmt(r.ha)} (${p(r.ha)}%)</span></div>
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px"><span style="width:80px;color:#f59e0b;font-weight:600">🟡 中可信</span><div style="flex:1;height:24px;background:#e2e8f0;border-radius:12px;overflow:hidden"><div style="height:100%;width:${p(r.ma)}%;background:#f59e0b;border-radius:12px"></div></div><span style="min-width:80px;text-align:right;font-weight:600">¥${fmt(r.ma)} (${p(r.ma)}%)</span></div>
         <div style="display:flex;align-items:center;gap:12px"><span style="width:80px;color:#ef4444;font-weight:600">🔴 低可信</span><div style="flex:1;height:24px;background:#e2e8f0;border-radius:12px;overflow:hidden"><div style="height:100%;width:${p(r.la)}%;background:#ef4444;border-radius:12px"></div></div><span style="min-width:80px;text-align:right;font-weight:600">¥${fmt(r.la)} (${p(r.la)}%)</span></div>
-    </div><p style="color:#64748b;font-size:13px;margin-top:12px">毛利18.5%，进项 ≥ 销售金额÷1.185 即够开</p></div>`;
+    </div><p style="color:#64748b;font-size:13px;margin-top:12px">毛利18.5%，进项 ≥ 销售金额÷1.185 即够开 | 开票建议总金额: ¥${fmt(r.totalSub)}</p></div>`;
 }
 
 function rConfTable(items,c,e){
@@ -369,10 +477,10 @@ function rConfTable(items,c,e){
     <div class="scrollable-table"><table><thead><tr><th>方式</th><th>原品名</th><th>规格</th><th>匹配进项</th><th>进项规格</th><th>销项金额</th><th>进项金额</th><th>说明</th><th>够开?</th></tr></thead>
     <tbody>${items.map(it=>{
         const mr=it.totalAmount/1.185,en=it.matchedJx&&it.matchedJx.totalAmount>=mr;
-        const ml=it.matchType==='exact'?'精确':it.matchType==='alias'?'别名':it.matchType==='name_same'?'品名同':'模糊';
+        const ml=it.matchType==='exact'?'精确':it.matchType==='alias'?'别名':it.matchType==='name_same'?'品名同':it.matchType==='category'?'同分类':it.matchType==='fallback'?'兜底':'模糊';
         const tc=it.matchType==='exact'||it.matchType==='alias'?'tag-success':it.matchType==='name_same'?'tag-info':'tag-warning';
         return`<tr><td><span class="tag ${tc}">${ml}</span></td><td><strong>${it.pureName}</strong></td><td>${it.spec||'-'}</td>
-        <td>${it.matchedJx?it.matchedJx.name:'<span style="color:#ef4444">无</span>'}</td>
+        <td>${it.matchedJx?it.matchedJx.name:'-'}</td>
         <td>${it.matchedJx?(it.matchedJx.spec||'-'):'-'}</td>
         <td class="money">${fmt(it.totalAmount)}</td>
         <td class="money" style="color:${en?'#10b981':'#ef4444'}">${it.matchedJx?fmt(it.matchedJx.totalAmount):'0.00'}</td>
@@ -391,10 +499,10 @@ function confirmSg(i){const s=result.sgs[i];aliasMap[s.item.pureName+'|'+s.item.
 function ignoreSg(i){result.sgs.splice(i,1);toast('已忽略','info');document.getElementById('tab4').innerHTML=rSgs();document.getElementById('sgBadge').textContent=result.sgs.length}
 
 function rAvail(){
-    const r=result;if(!r.avail.length)return'<div class="empty-state"><div class="icon">📦</div><div>暂无剩余</div></div>';
+    const r=result;if(!r.avail.length)return'<div class="empty-state"><div class="icon">📦</div><div>进项已全部分配</div></div>';
     return`<div class="card"><div class="card-header"><span class="card-title">📦 进项余额</span></div>
-    <div class="scrollable-table"><table><thead><tr><th>产品名</th><th>规格</th><th>剩余金额</th><th>发票数</th></tr></thead>
-    <tbody>${r.avail.map(j=>`<tr><td>${j.name}</td><td>${j.spec||'-'}</td><td class="money" style="color:var(--success)">${fmt(j.totalAmount)}</td><td>${j.products.length}</td></tr>`).join('')}</tbody></table></div></div>`;
+    <div class="scrollable-table"><table><thead><tr><th>产品名</th><th>规格</th><th>剩余金额</th><th>原始金额</th></tr></thead>
+    <tbody>${r.avail.map(j=>`<tr><td>${j.name}</td><td>${j.spec||'-'}</td><td class="money" style="color:var(--success)">${fmt(j.remainAmt)}</td><td class="money">${fmt(j.totalAmount)}</td></tr>`).join('')}</tbody></table></div></div>`;
 }
 function rAlias(){
     const es=Object.entries(aliasMap);if(!es.length)return'<div class="empty-state"><div class="icon">🔗</div><div>暂无别名</div></div>';
@@ -407,19 +515,19 @@ function clearAlias(){if(!confirm('确定清空？'))return;aliasMap={};localSto
 
 function rAdvice(){
     const r=result;if(!r.advices.length)return'<div class="empty-state"><div class="icon">📋</div><div>请先分析</div></div>';
-    const totalAdv=r.advices.reduce((s,a)=>s+a.amount,0);
-    return`<div class="card"><div class="card-header"><span class="card-title">📋 开票建议</span><span>逐行对应 · 行数=${r.advices.length} · 总金额=¥${fmt(totalAdv)}</span></div>
+    const totalAdv=r.advices.reduce((s,a)=>s+a.subAmount,0);
+    const matchPct=r.totalAmount>0?(totalAdv/r.totalAmount*100).toFixed(2):0;
+    return`<div class="card"><div class="card-header"><span class="card-title">📋 开票建议</span><span>行数=${r.advices.length} | 原总额=¥${fmt(r.totalAmount)} | 建议总额=¥${fmt(totalAdv)} | 匹配率=${matchPct}%</span></div>
     <div class="scrollable-table"><table>
-    <thead><tr><th>状态</th><th>原品名</th><th>规格</th><th>数量</th><th>单价</th><th>金额</th><th>替代品名</th><th>替代规格</th><th>替代数量</th><th>替代单价</th><th>替代金额</th><th>可信度</th><th>说明</th><th>需补进项</th></tr></thead>
+    <thead><tr><th>状态</th><th>原品名</th><th>规格</th><th>数量</th><th>单价</th><th>金额</th><th>替代品名</th><th>替代规格</th><th>替代数量</th><th>替代单价</th><th>替代金额</th><th>可信度</th><th>匹配说明</th></tr></thead>
     <tbody>${r.advices.map(a=>{
         let rc=a.status==='danger'?'error-row':a.status==='warning'?'highlight-row':'success-row';
-        const ct=a.confidence==='high'?'<span class="tag tag-success">高</span>':a.confidence==='medium'?'<span class="tag tag-warning">中</span>':a.confidence==='low'?'<span class="tag tag-danger">低</span>':'<span class="tag tag-danger">无</span>';
+        const ct=a.confidence==='high'?'<span class="tag tag-success">高</span>':a.confidence==='medium'?'<span class="tag tag-warning">中</span>':'<span class="tag tag-danger">低</span>';
         return`<tr class="${rc}">
         <td><span class="tag tag-${a.status==='success'?'success':a.status==='danger'?'danger':'warning'}">${a.statusText}</span></td>
         <td><strong>${a.pureName}</strong></td><td>${a.spec||'-'}</td><td>${a.qty}</td><td class="money">${a.price?a.price.toFixed(2):'-'}</td><td class="money">${fmt(a.amount)}</td>
-        <td>${a.subName||'-'}</td><td>${a.subSpec||'-'}</td><td>${a.subQty||'-'}</td><td class="money">${a.subPrice?a.subPrice.toFixed(2):'-'}</td><td class="money">${fmt(a.subAmount)}</td>
-        <td>${ct}</td><td style="font-size:12px;color:#64748b">${a.matchDetail||'-'}</td>
-        <td class="money" style="color:${a.gap>0?'#ef4444':'#10b981'}">${a.gap>0?fmt(a.gap):'-'}</td></tr>`}).join('')}</tbody></table></div></div>`;
+        <td><strong>${a.subName}</strong></td><td>${a.subSpec||'-'}</td><td>${a.subQty.toFixed(2)}</td><td class="money">${a.subPrice.toFixed(2)}</td><td class="money">${fmt(a.subAmount)}</td>
+        <td>${ct}</td><td style="font-size:12px;color:#64748b">${a.matchDetail||'-'}</td></tr>`}).join('')}</tbody></table></div></div>`;
 }
 
 // ===== 导出 =====
@@ -433,13 +541,14 @@ async function exportAll(){
     const hs={bold:true,color:{argb:'FFFFFFFF'},size:11},hf={type:'pattern',pattern:'solid',fgColor:{argb:'FF0891B2'}},bd={style:'thin',color:{argb:'FFD0D0D0'}};
     function addS(nm,hd,rows){const ws=wb.addWorksheet(nm);hd.forEach((h,i)=>{const c=ws.getCell(1,i+1);c.value=h;c.font=hs;c.fill=hf;c.alignment={horizontal:'center'};c.border=bd});rows.forEach((row,ri)=>row.forEach((v,ci)=>{const c=ws.getCell(ri+2,ci+1);c.value=v;c.border=bd;if(typeof v==='number')c.numFmt='#,##0.00'}));ws.columns.forEach(col=>col.width=18)}
     addS('匹配概览',['项目','数量','金额'],[['高可信',r.hc,r.ha],['中可信',r.mc,r.ma],['低可信',r.lc,r.la],['合计',r.totalItems,r.totalAmount]]);
+
     const all=[...r.high,...r.med,...r.low];
     addS('全部匹配',['可信度','方式','原品名','规格','匹配进项','进项规格','销项金额','进项金额','说明'],
-        all.map(m=>[m.confidence==='high'?'高':m.confidence==='medium'?'中':'低',m.matchType==='exact'?'精确':m.matchType==='alias'?'别名':m.matchType==='name_same'?'品名同':'模糊',m.pureName,m.spec||'',m.matchedJx?m.matchedJx.name:'无',m.matchedJx?(m.matchedJx.spec||''):'',m.totalAmount,m.matchedJx?m.matchedJx.totalAmount:0,m.detail||'']));
+        all.map(m=>[m.confidence==='high'?'高':m.confidence==='medium'?'中':'低',m.matchType==='exact'?'精确':m.matchType==='alias'?'别名':m.matchType==='name_same'?'品名同':m.matchType==='category'?'同分类':m.matchType==='fallback'?'兜底':'模糊',m.pureName,m.spec||'',m.matchedJx?m.matchedJx.name:'',m.matchedJx?(m.matchedJx.spec||')'):'',m.totalAmount,m.matchedJx?m.matchedJx.totalAmount:0,m.detail||'']));
 
-    // 开票建议：每行替代金额=原金额
-    addS('开票建议',['状态','原品名','规格','数量','单价','金额','替代品名','替代规格','替代数量','替代单价','替代金额','可信度','匹配说明','需补进项'],
-        r.advices.map(a=>[a.statusText,a.pureName,a.spec||'',a.qty,a.price,a.amount,a.subName||'',a.subSpec||'',a.subQty||0,a.subPrice||0,a.subAmount,a.confidence==='high'?'高':a.confidence==='medium'?'中':a.confidence==='low'?'低':'无',a.matchDetail||'',a.gap>0?a.gap:0]));
+    // 开票建议
+    addS('开票建议',['状态','原品名','规格','数量','单价','金额','替代品名','替代规格','替代数量','替代单价','替代金额','可信度','匹配说明'],
+        r.advices.map(a=>[a.statusText,a.pureName,a.spec||'',a.qty,a.price,a.amount,a.subName,a.subSpec||'',Math.round(a.subQty*100)/100,Math.round(a.subPrice*100)/100,a.subAmount,a.confidence==='high'?'高':a.confidence==='medium'?'中':'低',a.matchDetail||'']));
 
     const buf=await wb.xlsx.writeBuffer();saveAs(new Blob([buf]),`开票建议_${new Date().toLocaleDateString('zh-CN').replace(/\//g,'-')}.xlsx`);toast('导出成功！','success');
 }
