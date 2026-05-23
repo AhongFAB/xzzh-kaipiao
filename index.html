@@ -401,7 +401,7 @@
     </div>
 
     <footer>
-        <p>© 2024 开票建议匹配工具 | 开发者：张洪杰 | 侵权必究</p>
+        <p>© 2026 开票建议匹配工具 | 开发者：张洪杰 | 侵权必究</p>
     </footer>
 
     <div class="toast" id="toast"></div>
@@ -547,7 +547,7 @@
                 const sheet = data.Sheets[data.SheetNames[0]];
                 const jsonData = XLSX.utils.sheet_to_json(sheet, { defval: '' });
 
-                window[config.data] = jsonData;
+                if (config.data === "kaipiaoData") { kaipiaoData = jsonData; } else { jinxiaoData = jsonData; }
                 document.getElementById(config.info).classList.add('show');
                 document.getElementById(config.name).textContent = file.name;
                 document.getElementById(config.meta).textContent = `共 ${jsonData.length} 行数据`;
